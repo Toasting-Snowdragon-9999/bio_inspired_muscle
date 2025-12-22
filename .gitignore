@@ -41,5 +41,5 @@
 *.dwo
 
 # build folder
-build/*
-!build/.gitkeep
+cpp/build/*
+!cpp/build/.gitkeep
