@@ -17,8 +17,6 @@ Quick commands for Python, MuJoCo and Linux setup.
 ```
 
 # Make new branch
-> git branch <branch_name>
-> git checkout -b <branch_name>
 > git switch -c <branch_name>
 
 # Connect branch to main
