@@ -45,4 +45,4 @@ cpp/build/*
 !cpp/build/.gitkeep
 
 # Python env
-python/.venv/*
+python/.bach_env/*
