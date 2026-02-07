@@ -1,8 +1,5 @@
-from xml.parsers.expat import model
 import mujoco as mj 
 from mujoco.glfw import glfw
-import numpy as np
-import os
 
 
 class MujocoSim:
@@ -75,7 +72,7 @@ class MujocoSim:
         if controller is not None:
             controller.init_controller(self.model, self.data)
     
-        mj.set_mjcb_control(controller)
+        mj.set_mjcb_control(controller.run if controller is not None else None)
 
         # Main loop
         while not glfw.window_should_close(window):
