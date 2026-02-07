@@ -43,3 +43,6 @@
 # build folder
 cpp/build/*
 !cpp/build/.gitkeep
+
+# Python env
+python/.venv/*
