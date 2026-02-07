@@ -1,0 +1,230 @@
+import brian2 as b2
+from brian2 import (
+    second, ms, 
+    NeuronGroup, Synapses, StateMonitor, Network, network_operation,
+    np
+)
+from scipy.signal import find_peaks
+from scipy.fft import fft, fftfreq
+
+class MatsuokaCPG:
+
+    def __init__(self, dt=0.001):
+        self.dt = dt * second
+
+        eqs = '''
+        dx/dt = (-x - I_inh + s - b*x_adapt) / tau : 1
+        dx_adapt/dt = (-x_adapt + y) / T : 1
+        y = clip(x, 0, inf) : 1
+        I_inh : 1
+        s : 1
+        tau: second
+        T: second
+        b: 1
+        '''
+
+        self.neurons_cnt = 4
+        self.neurons = NeuronGroup(
+            self.neurons_cnt,
+            eqs,
+            method='rk4', # Runge-Kutta 4th order, better for keeping freq
+            dt=self.dt
+        )
+
+        self.neurons.tau = 0.05 * second            # This can change the freq
+        self.neurons.T   = 0.6 * second
+        self.neurons.b   = 1.5                      # adaptation strength
+        self.neurons.s = [1.0, 1.0, 1.001, 1.0]     # tonic drive
+
+        self.neurons.I_inh = 0
+        self.neurons.x = [0.01, 0.0, 0.0, 0.0]
+        self.neurons.x_adapt = [0.0, 0.0, 0.0, 0.0]
+
+        # The a_ij weights for mutual inhibition 
+        # All diagonal elements are 0 (no self-inhibition), and off-diagonal are 1.5 (strong inhibition)
+        # Changing this will change the gait pattern
+        # self.inhibitory_connection = np.array([
+        #     [0,   0.7, 0.0, 0.7],
+        #     [0.7, 0,   0.7, 0.0],
+        #     [0.0, 0.7, 0,   0.7],
+        #     [0.7, 0.0, 0.7, 0  ]
+        # ])
+        self.inhibitory_connection = np.array([
+            [0,   0.7, 0.0, 0.0],
+            [0.0, 0,   0.7, 0.0],
+            [0.0, 0.0, 0,   0.7],
+            [0.7, 0.0, 0.0, 0  ]
+        ])
+
+        @network_operation(dt=self.dt) 
+        def update_inhibition(): 
+            # Matrix multiply: I_inh[i] = Σ_j a[i,j] * y[j]
+            # self.neurons.I_inh = (
+            #     np.dot(self.inhibitory_connection, self.neurons.y)
+            #     / np.sum(self.inhibitory_connection, axis=1)
+            # )
+            self.neurons.I_inh = np.dot(self.inhibitory_connection, self.neurons.y)
+
+        self.mon = StateMonitor(
+            self.neurons,
+            ['x', 'x_adapt', 'y'],
+            record=True
+        )
+
+        self.net = Network(self.neurons, update_inhibition, self.mon)
+        self.net.store('initial')
+
+    def reset(self):
+        self.net.restore('initial')
+
+    def check_single_neuron_behavior(self) -> bool:
+        T = float(self.neurons.T[0] / second)  # Convert to dimensionless
+        tau = float(self.neurons.tau[0])
+        b = float(self.neurons.b[0])
+        return bool((T + tau)**2 >= (4 * T * tau * b))
+
+    def run(self, duration):
+
+        single_neuron_check = self.check_single_neuron_behavior()
+        if single_neuron_check:
+            print("Correct parameters for a single neuron to not oscillate.")
+        else:
+            print("Warning: Parameters will make single neuron oscillate.")
+
+        self.net.run(duration * second)
+
+        return_dict = {'time': self.mon.t / second}
+        for i in range(self.neurons_cnt):
+            return_dict[f'neuron{i+1}_internal'] = self.mon.x[i]
+            return_dict[f'neuron{i+1}_fatigue'] = self.mon.x_adapt[i]
+            return_dict[f'neuron{i+1}_output'] = self.mon.y[i]
+
+        return return_dict
+
+    def analyze_oscillations(self, results, neuron_idx=0, skip_initial_seconds=10.0):
+        """
+        Analyze oscillation characteristics of a neuron's output.
+
+        Returns both:
+        - cycle frequency (from peak timing)  ← locomotion-relevant
+        - dominant spectral frequency (FFT)   ← diagnostic only
+        """
+
+        time = results['time']
+        output = results[f'neuron{neuron_idx + 1}_output']
+
+        # --- Remove initial transient ---
+        skip_idx = np.searchsorted(time, skip_initial_seconds)
+        time_analysis = time[skip_idx:]
+        output_analysis = output[skip_idx:]
+
+        if len(output_analysis) < 100:
+            raise ValueError("Not enough data after transient removal")
+
+        dt = time_analysis[1] - time_analysis[0]
+
+        # --- Peak-based cycle analysis (PRIMARY) ---
+        min_distance = int(0.5 / dt)  # minimum 0.5 s between peaks
+        peaks, properties = find_peaks(
+            output_analysis,
+            height=np.mean(output_analysis),
+            distance=min_distance
+        )
+
+        if len(peaks) < 2:
+            return {
+                'cycle_freq_hz': np.nan,
+                'mean_period': np.nan,
+                'cv_period': np.nan,
+                'dominant_spectral_freq_hz': np.nan,
+                'num_peaks': len(peaks)
+            }
+
+        peak_times = time_analysis[peaks]
+        periods = np.diff(peak_times)
+
+        mean_period = np.mean(periods)
+        std_period = np.std(periods)
+        cv_period = std_period / mean_period if mean_period > 0 else np.nan
+
+        cycle_freq_hz = 1.0 / mean_period
+
+        peak_amplitudes = output_analysis[peaks]
+        mean_peak_amp = np.mean(peak_amplitudes)
+
+        # --- FFT-based spectral analysis (SECONDARY / DIAGNOSTIC) ---
+        signal_demeaned = output_analysis - np.mean(output_analysis)
+
+        N = len(signal_demeaned)
+        yf = np.abs(fft(signal_demeaned))
+        xf = fftfreq(N, dt)
+
+        pos_mask = xf > 0
+        xf_pos = xf[pos_mask]
+        yf_pos = yf[pos_mask]
+
+        dominant_spectral_freq_hz = xf_pos[np.argmax(yf_pos)]
+
+        # --- Clear, explicit reporting ---
+        # print(f"CPG cycle frequency (1 / mean period): {cycle_freq_hz:.3f} Hz")
+        # print(f"Dominant spectral frequency (FFT):     {dominant_spectral_freq_hz:.3f} Hz")
+        # print(f"Mean period: {mean_period:.3f} s | CV: {cv_period:.3f}")
+
+        return {
+            'cycle_freq_hz': cycle_freq_hz,                     # ← use this for gait
+            'mean_period': mean_period,
+            'cv_period': cv_period,
+            'mean_peak_amp': mean_peak_amp,
+            'dominant_spectral_freq_hz': dominant_spectral_freq_hz,  # ← diagnostic
+            'periods': periods,
+            'peak_amplitudes': peak_amplitudes,
+            'num_peaks': len(peaks),
+            'peak_times': peak_times
+        }
+
+    def print_analysis(self, results, skip_initial_seconds=10.0):
+        """
+        Print oscillation analysis for both neurons.
+
+        Clearly distinguishes:
+        - cycle frequency (time-domain, gait-relevant)
+        - dominant spectral frequency (FFT, diagnostic)
+        """
+
+        print("\n" + "=" * 60)
+        print("CPG OSCILLATION ANALYSIS")
+        print("=" * 60)
+
+        for neuron_idx in range(self.neurons_cnt):
+            analysis = self.analyze_oscillations(
+                results=results,
+                neuron_idx=neuron_idx,
+                skip_initial_seconds=skip_initial_seconds
+            )
+
+            print(f"\nNeuron {neuron_idx + 1}:")
+
+            if np.isnan(analysis['cycle_freq_hz']):
+                print("  No stable oscillation detected.")
+                continue
+
+            print(f"  Mean Period:              {analysis['mean_period']:.4f} s")
+            print(f"  Cycle Frequency (1/T):    {analysis['cycle_freq_hz']:.4f} Hz")
+            print(f"  Period CV:                {analysis['cv_period']:.4f}")
+            print(f"  Mean Peak Amplitude:      {analysis['mean_peak_amp']:.4f}")
+            print(f"  Dominant Spectral Freq:   {analysis['dominant_spectral_freq_hz']:.4f} Hz")
+            print(f"  Number of Peaks:          {analysis['num_peaks']}")
+
+            if len(analysis['periods']) > 0:
+                print(
+                    f"  Period Range:             "
+                    f"[{np.min(analysis['periods']):.4f}, "
+                    f"{np.max(analysis['periods']):.4f}] s"
+                )
+                print(
+                    f"  Peak Amplitude Range:     "
+                    f"[{np.min(analysis['peak_amplitudes']):.4f}, "
+                    f"{np.max(analysis['peak_amplitudes']):.4f}]"
+                )
+
+        print("=" * 60 + "\n")
