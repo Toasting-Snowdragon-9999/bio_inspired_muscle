@@ -10,4 +10,4 @@ Quick commands for Python, MuJoCo and Linux setup.
 
 # Activate virtual environment
 > cd python
-> source .venv/bin/activate
+> source .bach_env/bin/activate
