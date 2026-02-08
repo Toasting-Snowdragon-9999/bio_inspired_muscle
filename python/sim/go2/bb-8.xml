@@ -1,0 +1,77 @@
+<mujoco model="bb8_xray">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <visual>
+    <rgba haze="0.1 0.1 0.1 1"/>
+  </visual>
+
+  <worldbody>
+
+    
+    <!-- Outer sphere -->
+    <body name="sphere" pos="0 0 0.3">
+      <joint type="free"/>
+
+      <!-- Transparent shell -->
+      <geom type="sphere"
+            size="0.3"
+            mass="5"
+            rgba="0.7 0.7 1 0.25"
+            friction="1 0.005 0.0001"/>
+
+      <!-- Internal cart -->
+      <body name="cart" pos="0 0 0">
+        <!-- Cartesian motion inside sphere -->
+        <joint name="cart_x" type="slide" axis="1 0 0" range="-0.15 0.15"/>
+        <joint name="cart_y" type="slide" axis="0 1 0" range="-0.15 0.15"/>
+
+        <!-- Cart chassis -->
+        <geom type="cylinder"
+              size="0.23 0.02"
+              mass="2"
+              rgba="0.9 0.2 0.2 1"/>
+
+        <!-- Four internal wheels -->
+        <!-- +X -->
+        <geom type="cylinder"
+              pos="0.23 0 0"
+              size="0.05 0.01"
+              quat="0.5 0.5 -0.5 0.5"
+              mass="0.2"
+              rgba="0.1 0.1 0.1 1"/>
+
+        <!-- -X -->
+        <geom type="cylinder"
+              pos="-0.23 0 0"
+              size="0.05 0.01"
+              quat="0.5 0.5 -0.5 0.5" 
+              mass="0.2"
+              rgba="0.1 0.1 0.1 1"/>
+
+        <!-- +Y -->
+        <geom type="cylinder"
+              pos="0 0.23 0"
+              size="0.05 0.01"
+              quat="0.5 0.5 0.5 0.5"
+              mass="0.2"
+              rgba="0.1 0.1 0.1 1"/>
+
+        <!-- -Y -->
+        <geom type="cylinder"
+              pos="0 -0.23 0"
+              size="0.05 0.01"
+              quat="0.5 0.5 0.5 0.5"
+              mass="0.2"
+              rgba="0.1 0.1 0.1 1"/>
+
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Actuation -->
+  <actuator>
+  <motor name="cart_x" joint="cart_x"
+         ctrlrange="-10 10" ctrllimited="true"/>
+  <motor name="cart_y" joint="cart_y"
+         ctrlrange="-10 10" ctrllimited="true"/>
+  </actuator>
+</mujoco>
