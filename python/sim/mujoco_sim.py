@@ -20,6 +20,9 @@ class MujocoSim:
         # Will be set during init_graphics
         self.cam = None
         self.scene = None
+        
+        # Controller keyboard callback
+        self.controller_keyboard_callback = None
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -71,6 +74,9 @@ class MujocoSim:
         # Initialize and set controller
         if controller is not None:
             controller.init_controller(self.model, self.data)
+            # Register controller's keyboard callback if it has one
+            if hasattr(controller, 'keyboard_callback'):
+                self.controller_keyboard_callback = controller.keyboard_callback
     
         mj.set_mjcb_control(controller.run if controller is not None else None)
 
@@ -91,9 +97,14 @@ class MujocoSim:
 
 
     def keyboard(self, window, key, scancode, act, mods):
+        # Handle built-in keyboard commands
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
+        
+        # Pass keyboard event to controller if registered
+        if self.controller_keyboard_callback is not None:
+            self.controller_keyboard_callback(window, key, scancode, act, mods)
 
     def mouse_button(self, window, button, act, mods):
         # update button state

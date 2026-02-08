@@ -13,7 +13,7 @@ class MatsuokaCPG:
         self.dt = dt * second
 
         eqs = '''
-        dx/dt = (-x - I_inh + s - b*x_adapt) / tau : 1
+        dx/dt = (-x - I_inh + s - b*x_adapt + feed) / tau : 1
         dx_adapt/dt = (-x_adapt + y) / T : 1
         y = clip(x, 0, inf) : 1
         I_inh : 1
@@ -21,6 +21,7 @@ class MatsuokaCPG:
         tau: second
         T: second
         b: 1
+        feed : 1
         '''
 
         self.neurons_cnt = 4
@@ -32,28 +33,25 @@ class MatsuokaCPG:
         )
 
         self.neurons.tau = 0.05 * second            # This can change the freq
-        self.neurons.T   = 0.6 * second
-        self.neurons.b   = 1.5                      # adaptation strength
-        self.neurons.s = [1.0, 1.0, 1.001, 1.0]     # tonic drive
+        self.neurons.T   = 0.5 * second             # 
+        self.neurons.b   = 2.5                      # adaptation strength
+        self.neurons.s = [1.0, 1.0, 1.0, 1.0]       # tonic drive, like bias current, constant and always present
 
-        self.neurons.I_inh = 0
-        self.neurons.x = [0.01, 0.0, 0.0, 0.0]
-        self.neurons.x_adapt = [0.0, 0.0, 0.0, 0.0]
+        self.neurons.I_inh = [0, 0, 0, 0]           # Weighted connection to other neurons, should be negative for inhibition
+        self.neurons.feed = [0.0, 0.0, 0.02, 0.0]   # External input 
+        self.neurons.x = [0.1, 0.0, 0.0, 0.0]       # Internal state
+        self.neurons.x_adapt = [0.0, 0.0, 0.0, 0.0] # Adaption state (fatigue)
 
         # The a_ij weights for mutual inhibition 
-        # All diagonal elements are 0 (no self-inhibition), and off-diagonal are 1.5 (strong inhibition)
+        # All diagonal elements are 0 (no self-inhibition)
         # Changing this will change the gait pattern
-        # self.inhibitory_connection = np.array([
-        #     [0,   0.7, 0.0, 0.7],
-        #     [0.7, 0,   0.7, 0.0],
-        #     [0.0, 0.7, 0,   0.7],
-        #     [0.7, 0.0, 0.7, 0  ]
-        # ])
+        # Should be negative for inhibition
+        
         self.inhibitory_connection = np.array([
-            [0,   0.7, 0.0, 0.0],
-            [0.0, 0,   0.7, 0.0],
-            [0.0, 0.0, 0,   0.7],
-            [0.7, 0.0, 0.0, 0  ]
+            [0.0, 1.5, 2.0, 1.0],
+            [1.5, 0.0, 1.0, 1.0],
+            [2.0, 1.0, 0.0, 2.0],
+            [1.0, 1.0, 2.0, 0.0]
         ])
 
         @network_operation(dt=self.dt) 
@@ -95,11 +93,18 @@ class MatsuokaCPG:
 
         return_dict = {'time': self.mon.t / second}
         for i in range(self.neurons_cnt):
-            return_dict[f'neuron{i+1}_internal'] = self.mon.x[i]
-            return_dict[f'neuron{i+1}_fatigue'] = self.mon.x_adapt[i]
-            return_dict[f'neuron{i+1}_output'] = self.mon.y[i]
+            return_dict[f'neuron{i+1}_internal'] = self.mon.x[i] 
+            return_dict[f'neuron{i+1}_fatigue'] = self.mon.x_adapt[i] 
+            return_dict[f'neuron{i+1}_output'] = self.mon.y[i] 
 
         return return_dict
+
+    def cpg_to_activation(self, x, k=2.0):
+        """
+        Map internal CPG state to [0, 1] activation.
+        For when not running in Brian2
+        """
+        return 0.5 * (np.tanh(k * x) + 1.0)
 
     def analyze_oscillations(self, results, neuron_idx=0, skip_initial_seconds=10.0):
         """

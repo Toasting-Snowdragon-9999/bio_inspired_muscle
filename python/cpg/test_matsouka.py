@@ -2,7 +2,30 @@ from matsuoka_oscillator import MatsuokaCPG
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from plotting.time_series_plotter import TimeSeriesPlotter
 
+
+"""
+Neuron 0 → Front Left  (FL)
+Neuron 1 → Front Right (FR)
+Neuron 2 → Rear  Right (RR)
+Neuron 3 → Rear  Left  (RL)
+
+"""
+
+def map_cpg_output_to_activation(result, front: bool):
+    FRONT_HIP_POS_RANGE = (-1.5708, 3.4907)  # radians
+    BACK_HIP_POS_RANGE  = (-0.5236, 4.5379)  # radians
+    normalized = result / np.max(result)
+    if front:
+        theta_target = FRONT_HIP_POS_RANGE[0] + normalized * (FRONT_HIP_POS_RANGE[1] - FRONT_HIP_POS_RANGE[0])
+        return theta_target
+
+    else:
+        theta_target = BACK_HIP_POS_RANGE[0] + normalized * (BACK_HIP_POS_RANGE[1] - BACK_HIP_POS_RANGE[0])
+        return theta_target
 
 def main():
     """Test the Matsuoka CPG oscillator (arbitrary number of neurons)."""
@@ -24,59 +47,31 @@ def main():
     results = cpg.run(duration)
 
     # --- Plotting ---
-    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
-
     time = results['time']
+    
+    # Create dictionary of neuron outputs
+    neuron_data = {
+        f'Neuron {i+1}': map_cpg_output_to_activation(results[f'neuron{i+1}_output'], front=(i < 2))
+        for i in range(n)
+    }
+    
+    # Plot using the TimeSeriesPlotter
+    plotter = TimeSeriesPlotter(time, figsize=(12, 3), subplot_height=3.0)
+    plotter.plot(
+        neuron_data,
+        ylabel='Output (y)',
+        xlabel='Time (seconds)',
+        title_prefix='',
+        linewidth=0.8
+    )
 
-    # ---- Neural outputs ----
-    for i in range(n):
-        axes[0].plot(
-            time,
-            results[f'neuron{i+1}_output'],
-            label=f'Neuron {i+1}',
-            linewidth=0.8
-        )
-
-    axes[0].set_ylabel('Output (y)')
-    axes[0].set_title('Matsuoka CPG – Neural Outputs')
-    axes[0].legend(ncol=min(n, 4))
-    axes[0].grid(True, alpha=0.3)
-
-    # ---- Internal states ----
-    for i in range(n):
-        axes[1].plot(
-            time,
-            results[f'neuron{i+1}_internal'],
-            label=f'Neuron {i+1}',
-            linewidth=0.8
-        )
-
-    axes[1].set_ylabel('Internal State (x)')
-    axes[1].legend(ncol=min(n, 4))
-    axes[1].grid(True, alpha=0.3)
-
-    # ---- Adaptation states ----
-    for i in range(n):
-        axes[2].plot(
-            time,
-            results[f'neuron{i+1}_fatigue'],
-            label=f'Neuron {i+1}',
-            linewidth=0.8
-        )
-
-    axes[2].set_ylabel('Adaptation (x_adapt)')
-    axes[2].set_xlabel('Time (seconds)')
-    axes[2].legend(ncol=min(n, 4))
-    axes[2].grid(True, alpha=0.3)
-
-    plt.tight_layout()
+    # Show plot
+    plotter.show()
 
     # Save plot
     output_dir = Path(__file__).parent / 'output_files'
-    output_dir.mkdir(exist_ok=True)
     plot_path = output_dir / 'matsuoka_cpg_python.png'
-    plt.savefig(plot_path, dpi=150)
-    print(f"Saved plot to {plot_path}")
+    plotter.save(plot_path, dpi=150)
 
     # ---- Summary ----
     print("\nSimulation complete!")
