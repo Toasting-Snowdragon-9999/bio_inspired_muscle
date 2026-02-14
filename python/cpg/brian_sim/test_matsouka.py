@@ -1,4 +1,4 @@
-from matsuoka_oscillator import MatsuokaCPG
+from python.cpg.brian_sim.matsuoka_oscillator import MatsuokaCPGsim
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -31,7 +31,7 @@ def main():
     """Test the Matsuoka CPG oscillator (arbitrary number of neurons)."""
 
     # Create oscillator
-    cpg = MatsuokaCPG(dt=0.001)
+    cpg = MatsuokaCPGsim(dt=0.001)
     n = cpg.neurons_cnt
 
     # Check single-neuron stability condition

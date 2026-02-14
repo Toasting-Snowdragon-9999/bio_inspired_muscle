@@ -7,7 +7,7 @@ from brian2 import (
 from scipy.signal import find_peaks
 from scipy.fft import fft, fftfreq
 
-class MatsuokaCPG:
+class MatsuokaCPGsim:
 
     def __init__(self, dt=0.001):
         self.dt = dt * second
@@ -39,6 +39,15 @@ class MatsuokaCPG:
 
         self.neurons.I_inh = [0, 0, 0, 0]           # Weighted connection to other neurons, should be negative for inhibition
         self.neurons.feed = [0.0, 0.0, 0.02, 0.0]   # External input 
+
+        print("Initialized Matsuoka CPG with parameters:")
+
+        for neuron in self.neurons:
+            neuron.x = np.random.rand()  # Small random initial state
+            print(neuron.x)
+
+
+
         self.neurons.x = [0.1, 0.0, 0.0, 0.0]       # Internal state
         self.neurons.x_adapt = [0.0, 0.0, 0.0, 0.0] # Adaption state (fatigue)
 
