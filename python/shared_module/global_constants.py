@@ -6,6 +6,11 @@ FRONT_HIP_POS_RANGE = (-1.5708, 3.4907)
 BACK_HIP_POS_RANGE  = (-0.5236, 4.5379)
 ABDUCTION_POS_RANGE = (-1.0472, 1.0472)
 
+MID_KNEE_POS = np.mean(KNEE_POS_RANGE)
+MID_BACK_HIP_POS = np.mean(BACK_HIP_POS_RANGE)
+MID_FRONT_HIP_POS = np.mean(FRONT_HIP_POS_RANGE)
+MID_ABDUCTION_POS = np.mean(ABDUCTION_POS_RANGE)
+
 # ── Actuator / sensor index maps ────────────────────────────────
 ACTUATOR_DICT = {
     'front_right_hip': 0,   'front_right_thigh': 1,  'front_right_calf': 2,

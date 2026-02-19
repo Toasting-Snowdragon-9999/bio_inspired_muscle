@@ -61,7 +61,7 @@ class KuramotoCpg:
         self.d_theta = np.zeros(self.neurons_cnt)
 
         self.hip_amplitude = 0.4
-        self.knee_amplitude = 0.8
+        self.knee_amplitude = 1.2
 
         self.standing_targets = {
             'front_left_thigh':  0.8,
@@ -82,9 +82,11 @@ class KuramotoCpg:
             'rear_left_hip': 0.0,
         }
         if pd_controller is None:
-            kp = 40.0
-            kd = 4.0
-            self.pd_controller = MusclePdController(kp=kp, kd=kd)
+            # k, d are the knee spring–damper parameters;
+            # passive_kp, passive_kd are the stiff hip PD gains.
+            self.pd_controller = MusclePdController(
+                k=40.0, d=4.0, passive_kp=40.0, passive_kd=4.0
+            )
         else: 
             self.pd_controller = pd_controller
 
@@ -168,35 +170,28 @@ class KuramotoCpg:
             self.pd_controller.apply_pd(targets)
             return
 
-        # ── Blend: ramp CPG influence over 1 s after warmup ─────────
         blend_duration = 1.0  # seconds
         t_since_warmup = self.sim_time - self.warmup_seconds
         blend = min(1.0, t_since_warmup / blend_duration)
 
-        # 1. Step the 4 hip oscillators forward
         self.rk4_integration(self.dt)
 
-        # 2. Map oscillator phases → thigh & calf joint targets
-        #    Leg index: 0=FL, 1=FR, 2=RR, 3=RL
         cpg_targets = {}
         for osc_idx in range(self.neurons_cnt):
             phase = self.neurons[osc_idx].phase
-
+            
             # Thigh target: standing - amplitude * sin(phase)  (negative = forward)
             thigh_name = OSCILLATOR_TO_THIGH[osc_idx]
             thigh_stand = self.standing_targets[thigh_name]
             thigh_cpg = thigh_stand - self.hip_amplitude * np.sin(phase)
             cpg_targets[thigh_name] = thigh_stand + blend * (thigh_cpg - thigh_stand)
 
-            # Calf target: continuous knee oscillation, clamped to bending only.
-            # With offset -π/2 the knee bends at start of swing (foot lift),
-            # straightens as leg reaches forward (heel strike), stays straight
-            # through stance.
             calf_name = OSCILLATOR_TO_CALF[osc_idx]
             calf_stand = self.standing_targets[calf_name]
             knee_signal = min(0.0, np.sin(phase + self.knee_phase_offset))
             calf_cpg = calf_stand + self.knee_amplitude * knee_signal
             cpg_targets[calf_name] = calf_stand + blend * (calf_cpg - calf_stand)
+
 
         # 3. Build full target dict: static joints + CPG-driven joints
         targets = dict(self.static_targets)
@@ -210,8 +205,8 @@ class KuramotoCpg:
         """
         Return current output signal for each hip and its corresponding knee.
         Returns:
-            hip_outputs:  np.array of shape (4,)  – -sin(θ_i) (matches hip output sign)
-            knee_outputs: np.array of shape (4,)  – clamped knee signal
+            hip_outputs:  np.array of shape (4,)  - -sin(θ_i) (matches hip output sign)
+            knee_outputs: np.array of shape (4,)  - clamped knee signal
         """
         hip_out = np.zeros(self.neurons_cnt)
         knee_out = np.zeros(self.neurons_cnt)
