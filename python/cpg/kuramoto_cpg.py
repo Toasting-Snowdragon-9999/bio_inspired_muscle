@@ -85,7 +85,7 @@ class KuramotoCpg:
             # k, d are the knee spring–damper parameters;
             # passive_kp, passive_kd are the stiff hip PD gains.
             self.pd_controller = MusclePdController(
-                k=40.0, d=4.0, passive_kp=40.0, passive_kd=4.0
+                p=40.0, d=4.0, passive_kp=40.0, passive_kd=4.0
             )
         else: 
             self.pd_controller = pd_controller
@@ -186,11 +186,11 @@ class KuramotoCpg:
             thigh_cpg = thigh_stand - self.hip_amplitude * np.sin(phase)
             cpg_targets[thigh_name] = thigh_stand + blend * (thigh_cpg - thigh_stand)
 
-            calf_name = OSCILLATOR_TO_CALF[osc_idx]
-            calf_stand = self.standing_targets[calf_name]
-            knee_signal = min(0.0, np.sin(phase + self.knee_phase_offset))
-            calf_cpg = calf_stand + self.knee_amplitude * knee_signal
-            cpg_targets[calf_name] = calf_stand + blend * (calf_cpg - calf_stand)
+            # calf_name = OSCILLATOR_TO_CALF[osc_idx]
+            # calf_stand = self.standing_targets[calf_name]
+            # knee_signal = min(0.0, np.sin(phase + self.knee_phase_offset))
+            # calf_cpg = calf_stand + self.knee_amplitude * knee_signal
+            # cpg_targets[calf_name] = calf_stand + blend * (calf_cpg - calf_stand)
 
 
         # 3. Build full target dict: static joints + CPG-driven joints

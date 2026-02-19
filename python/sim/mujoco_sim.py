@@ -52,6 +52,8 @@ class MujocoSim:
         self.scene = mj.MjvScene(self.model, maxgeom=10000)
         context = mj.MjrContext(self.model, mj.mjtFontScale.mjFONTSCALE_150.value)
 
+        self.init_camera()
+
         # Install GLFW callbacks
         glfw.set_key_callback(window, self.keyboard)
         glfw.set_cursor_pos_callback(window, self.mouse_move)
@@ -68,6 +70,12 @@ class MujocoSim:
         (0.2, 0.8, 0.2),
         (0.8, 0.2, 0.8),
     ]
+
+    def init_camera(self):
+        self.cam.azimuth = -90
+        self.cam.elevation = -15
+        self.cam.distance = 2.5
+        self.cam.lookat = np.array([0.0, 0.0, 0.0])
 
     def _init_figures(self):
         """Create two mjvFigure objects for hip / knee oscillator output."""
@@ -270,3 +278,5 @@ class MujocoSim:
                 self._fig_controller = self.controller
                 self._init_figures()
             self.enabled_graph = True
+
+    
