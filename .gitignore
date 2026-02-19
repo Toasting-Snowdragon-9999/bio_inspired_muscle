@@ -55,3 +55,4 @@ python/sim/__pycache__/*
 python/plotting/__pycache__/*
 python/cpg/__pycache__/*
 python/pd/__pycache__/*
+!python/sim/go2/assets/*
