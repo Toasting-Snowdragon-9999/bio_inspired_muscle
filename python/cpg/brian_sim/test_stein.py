@@ -80,7 +80,7 @@ def main():
     plotter.show()
 
     # Save plot
-    output_dir = Path(__file__).parent / 'output_files'
+    output_dir = Path(__file__).parent / 'output_images'
     plot_path = output_dir / 'stein_cpg_python.png'
     plotter.save(plot_path, dpi=150)
 

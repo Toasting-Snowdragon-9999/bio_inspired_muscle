@@ -34,6 +34,8 @@ class MujocoSim:
         self.fig_knee = None
         self._fig_pnt = 0          # ring-buffer write index
         self._fig_controller = None
+        self.dispense_in_air = False
+        self.enabled_graph = False
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -128,7 +130,7 @@ class MujocoSim:
         mj.mjr_render(viewport, scene, context)
 
         # ── Render oscillator figure overlays ───────────────────────
-        if self.fig_hip is not None:
+        if self.fig_hip is not None and self.enabled_graph:
             self._update_figures()
             fig_w = viewport_width // 3
             fig_h = viewport_height // 4
@@ -159,10 +161,10 @@ class MujocoSim:
             if hasattr(controller, 'keyboard_callback'):
                 self.controller_keyboard_callback = controller.keyboard_callback
             # Set up oscillator figure overlay if controller supports it
-            if hasattr(controller, 'get_oscillator_outputs'):
-                self._fig_controller = controller
-                self._init_figures()
-    
+            # if hasattr(controller, 'get_oscillator_outputs'):
+            #     self._fig_controller = controller
+            #     self._init_figures()
+
         mj.set_mjcb_control(controller.run if controller is not None else None)
 
         # Main loop
@@ -177,6 +179,9 @@ class MujocoSim:
                 break
 
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
+
+            if self.dispense_in_air:
+                self.enable_air_mode(0.5)
 
         glfw.terminate()
 
@@ -245,3 +250,23 @@ class MujocoSim:
         action = mj.mjtMouse.mjMOUSE_ZOOM
         mj.mjv_moveCamera(self.model, action, 0.0, -0.05 *
                         yoffset, self.scene, self.cam)
+    
+    def remove_gravity(self):
+        self.model.opt.gravity[:] = [0.0, 0.0, 0.0]
+    
+    def enable_air_mode(self, height=1.0):
+        if not self.dispense_in_air:
+            self.dispense_in_air = True
+        self.model.opt.gravity[:] = [0, 0, 0]
+        self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+
+        self.data.qvel[0:6] = 0.0
+        self.data.qpos[2] = height
+        mj.mj_forward(self.model, self.data)
+    
+    def enable_graph(self):
+        if self.fig_hip is None:
+            if hasattr(self.controller, 'get_oscillator_outputs'):
+                self._fig_controller = self.controller
+                self._init_figures()
+            self.enabled_graph = True
