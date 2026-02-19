@@ -8,7 +8,6 @@ from scipy.signal import find_peaks
 from scipy.fft import fft, fftfreq
 
 class MatsuokaCPGsim:
-
     def __init__(self, dt=0.001):
         self.dt = dt * second
 
@@ -45,8 +44,6 @@ class MatsuokaCPGsim:
         for neuron in self.neurons:
             neuron.x = np.random.rand()  # Small random initial state
             print(neuron.x)
-
-
 
         self.neurons.x = [0.1, 0.0, 0.0, 0.0]       # Internal state
         self.neurons.x_adapt = [0.0, 0.0, 0.0, 0.0] # Adaption state (fatigue)
@@ -107,13 +104,6 @@ class MatsuokaCPGsim:
             return_dict[f'neuron{i+1}_output'] = self.mon.y[i] 
 
         return return_dict
-
-    def cpg_to_activation(self, x, k=2.0):
-        """
-        Map internal CPG state to [0, 1] activation.
-        For when not running in Brian2
-        """
-        return 0.5 * (np.tanh(k * x) + 1.0)
 
     def analyze_oscillations(self, results, neuron_idx=0, skip_initial_seconds=10.0):
         """
