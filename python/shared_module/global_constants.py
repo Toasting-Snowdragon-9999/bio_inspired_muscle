@@ -1,4 +1,8 @@
 import numpy as np
+try:
+    from robot_state import RobotState, State, Joint, Gait
+except ModuleNotFoundError:
+    from shared_module.robot_state import RobotState, State, Joint, Gait
 
 # ── Joint ranges (radians) ──────────────────────────────────────
 KNEE_POS_RANGE      = (-2.7227, -0.83776)
@@ -11,48 +15,43 @@ MID_BACK_HIP_POS = np.mean(BACK_HIP_POS_RANGE)
 MID_FRONT_HIP_POS = np.mean(FRONT_HIP_POS_RANGE)
 MID_ABDUCTION_POS = np.mean(ABDUCTION_POS_RANGE)
 
-# ── Actuator / sensor index maps ────────────────────────────────
+NEURON_CNT = 4
+
 ACTUATOR_DICT = {
-    'front_right_hip': 0,   'front_right_thigh': 1,  'front_right_calf': 2,
-    'front_left_hip': 3,    'front_left_thigh': 4,   'front_left_calf': 5,
-    'rear_right_hip': 6,    'rear_right_thigh': 7,   'rear_right_calf': 8,
-    'rear_left_hip': 9,     'rear_left_thigh': 10,   'rear_left_calf': 11,
+    Joint.FR_HIP: 0,   Joint.FR_THIGH: 1,  Joint.FR_CALF: 2,
+    Joint.FL_HIP: 3,    Joint.FL_THIGH: 4,   Joint.FL_CALF: 5,
+    Joint.RR_HIP: 6,    Joint.RR_THIGH: 7,   Joint.RR_CALF: 8,
+    Joint.RL_HIP: 9,     Joint.RL_THIGH: 10,   Joint.RL_CALF: 11,
 }
 
 SENSOR_POS_DICT = {
-    'front_right_hip': 0,   'front_right_thigh': 1,  'front_right_calf': 2,
-    'front_left_hip': 3,    'front_left_thigh': 4,   'front_left_calf': 5,
-    'rear_right_hip': 6,    'rear_right_thigh': 7,   'rear_right_calf': 8,
-    'rear_left_hip': 9,     'rear_left_thigh': 10,   'rear_left_calf': 11,
+    Joint.FR_HIP: 0,   Joint.FR_THIGH: 1,  Joint.FR_CALF: 2,
+    Joint.FL_HIP: 3,    Joint.FL_THIGH: 4,   Joint.FL_CALF: 5,
+    Joint.RR_HIP: 6,    Joint.RR_THIGH: 7,   Joint.RR_CALF: 8,
+    Joint.RL_HIP: 9,     Joint.RL_THIGH: 10,   Joint.RL_CALF: 11,
 }
 
 SENSOR_VEL_DICT = {
-    'front_right_hip': 12,  'front_right_thigh': 13, 'front_right_calf': 14,
-    'front_left_hip': 15,   'front_left_thigh': 16,  'front_left_calf': 17,
-    'rear_right_hip': 18,   'rear_right_thigh': 19,  'rear_right_calf': 20,
-    'rear_left_hip': 21,    'rear_left_thigh': 22,   'rear_left_calf': 23,
+    Joint.FR_HIP: 12,  Joint.FR_THIGH: 13, Joint.FR_CALF: 14,
+    Joint.FL_HIP: 15,   Joint.FL_THIGH: 16,  Joint.FL_CALF: 17,
+    Joint.RR_HIP: 18,   Joint.RR_THIGH: 19,  Joint.RR_CALF: 20,
+    Joint.RL_HIP: 21,    Joint.RL_THIGH: 22,   Joint.RL_CALF: 23,
 }
 
 OSCILLATOR_TO_THIGH = {
-    0: 'front_left_thigh',
-    1: 'front_right_thigh',
-    2: 'rear_right_thigh',
-    3: 'rear_left_thigh',
+    0: Joint.FL_THIGH,
+    1: Joint.FR_THIGH,
+    2: Joint.RR_THIGH,
+    3: Joint.RL_THIGH,
 }
 
-OSCILLATOR_TO_CALF = {
-    0: 'front_left_calf',
-    1: 'front_right_calf',
-    2: 'rear_right_calf',
-    3: 'rear_left_calf',
+# TODO: Test and tune these values for energy efficiency
+ENERGY_EFFICIENT_FREQ = {
+    Gait.WALK: 0.5,
+    Gait.TROT: 0.7,
+    Gait.BOUND: 1.0,
+    Gait.PACE: 0.8,
+    Gait.GALLOP: 1.2,
 }
-
-GAITS = {
-    'trot':   np.array([0.0,       np.pi,     0.0,       np.pi]),
-    'walk':   np.array([0.0,       np.pi/2,   np.pi,     3*np.pi/2]),
-    'bound':  np.array([0.0,       0.0,       np.pi,     np.pi]),
-    'pace':   np.array([0.0,       np.pi,     np.pi,     0.0]),
-    'gallop': np.array([0.0,       0.0,       np.pi*0.8, np.pi*0.8]),
-} 
 
 LEG_LABELS = ['FL', 'FR', 'RR', 'RL']
