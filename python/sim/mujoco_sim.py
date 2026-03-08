@@ -1,3 +1,4 @@
+from pyexpat import model
 import os, sys
 from math import floor
 import numpy as np
@@ -6,12 +7,17 @@ from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from shared_module.global_constants import LEG_LABELS
+from shared_module.global_constants import (
+    LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
+    ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
+    SENSOR_VEL_DICT, ACTUATOR_DICT)
+from shared_module.robot_state import Joint, RobotInterface
 
 class MujocoSim:
-    def __init__(self, model_path, window_scale = 1.0, print_camera_config=0):
+    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0):
         self.model = mj.MjModel.from_xml_path(model_path)
         self.data = mj.MjData(self.model)
+        self.robot_interface = robot_interface
         self.print_camera_config = print_camera_config
         self.window_width = floor(1920 * window_scale)
         self.window_height = floor(1080 * window_scale)
@@ -32,10 +38,22 @@ class MujocoSim:
         # Oscillator figure overlays
         self.fig_hip = None
         self.fig_knee = None
+        self.fig_joints = None
+        self.slide_joints = None
+        self._joint_fig_pnt = 0
+        self._joint_history = 300
+        self._joint_indices = None
         self._fig_pnt = 0          # ring-buffer write index
         self._fig_controller = None
         self.dispense_in_air = False
         self.enabled_graph = False
+        self.enabled_joint_graph = False
+        self.enabled_joint_sliders = False
+
+        # for computing CoT
+        self._energy = 0.0
+        self._start_x = None
+        self._robot_mass = None
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -95,6 +113,83 @@ class MujocoSim:
             setattr(self, attr, fig)
 
         self._fig_pnt = 0
+    
+    def _init_joint_figures(self):
+        """Create figure for joint position visualization."""
+        fig = mj.MjvFigure()
+        mj.mjv_defaultFigure(fig)
+
+        fig.title = "Joint Positions"
+        fig.xlabel = "Time"
+        fig.range[0] = [0, self._joint_history]
+        fig.range[1] = [-2.5, 2.5]   # adjust for your joint limits
+        fig.gridsize = [5, 5]
+
+        # Get joint indices (exclude root free joint)
+        self._joint_indices = []
+        for i in range(self.model.njnt):
+            name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, i)
+            if name is not None and self.model.jnt_type[i] != mj.mjtJoint.mjJNT_FREE:
+                self._joint_indices.append(i)
+
+        # Setup lines
+        for i, j_id in enumerate(self._joint_indices):
+            fig.linergb[i] = [np.random.rand(), np.random.rand(), np.random.rand()]
+            fig.linename[i] = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, j_id)
+
+            for k in range(self._joint_history):
+                fig.linedata[i][2*k] = float(k)
+                fig.linedata[i][2*k+1] = 0.0
+
+            fig.linepnt[i] = self._joint_history
+
+        self.fig_joints = fig
+        self._joint_fig_pnt = 0
+    
+    def _init_joint_sliders(self):
+        self.slide_joints = []
+        self._joint_names = []
+        self._joint_ranges = []
+
+        # Exact joint order based on SENSOR_POS_DICT
+        joint_order = list(SENSOR_POS_DICT.keys())
+
+        for name in joint_order:
+            self._joint_names.append(name)
+
+            if "calf" in name:
+                self._joint_ranges.append(KNEE_POS_RANGE)
+            elif "thigh" in name:
+                if "front" in name:
+                    self._joint_ranges.append(FRONT_HIP_POS_RANGE)
+                else:
+                    self._joint_ranges.append(BACK_HIP_POS_RANGE)
+            elif "hip" in name:
+                self._joint_ranges.append(ABDUCTION_POS_RANGE)
+
+        for i, name in enumerate(self._joint_names):
+            fig = mj.MjvFigure()
+            mj.mjv_defaultFigure(fig)
+
+            fig.title = str(name)
+            fig.xlabel = ""
+            fig.range[0] = [0, 1]
+            fig.range[1] = list(self._joint_ranges[i])
+            fig.gridsize = [2, 5]
+
+            fig.linergb[0] = [0.2, 0.7, 0.9]
+            fig.linepnt[0] = 2
+
+            # initialize at midpoint
+            mid = np.mean(self._joint_ranges[i])
+
+            fig.linedata[0][0] = 0.5
+            fig.linedata[0][1] = self._joint_ranges[i][0]
+
+            fig.linedata[0][2] = 0.5
+            fig.linedata[0][3] = mid
+
+            self.slide_joints.append(fig)
 
     def _update_figures(self):
         """Push latest oscillator outputs into the figure ring buffers."""
@@ -117,6 +212,45 @@ class MujocoSim:
 
         self._fig_pnt += 1
 
+    def _update_joint_figures(self):
+        if self.fig_joints is None:
+            return
+
+        for line_i, j_id in enumerate(self._joint_indices):
+            # Read joint angle directly from qpos using MuJoCo's qposadr
+            addr = self.model.jnt_qposadr[j_id]
+            value = self.data.qpos[addr]
+
+            # shift left
+            for k in range(self._joint_history - 1):
+                self.fig_joints.linedata[line_i][2*k+1] = \
+                    self.fig_joints.linedata[line_i][2*(k+1)+1]
+
+            # write newest sample
+            self.fig_joints.linedata[line_i][2*(self._joint_history-1)+1] = float(value)
+
+        self._joint_fig_pnt += 1
+    
+    def _update_joint_sliders(self):
+        if self.slide_joints is None:
+            return
+
+        sens = self.data.sensordata
+
+        for i, name in enumerate(self._joint_names):
+            sensor_idx = SENSOR_POS_DICT[name]
+            joint_val = sens[sensor_idx]
+
+            fig = self.slide_joints[i]
+
+            # bottom = joint min
+            fig.linedata[0][0] = 0.5
+            fig.linedata[0][1] = self._joint_ranges[i][0]
+
+            # top = current theta
+            fig.linedata[0][2] = 0.5
+            fig.linedata[0][3] = joint_val
+
     def simulation_step(self, window, model, data, opt, scene, cam, context):
         """Perform one simulation step and render."""
         viewport_width, viewport_height = glfw.get_framebuffer_size(window)
@@ -130,7 +264,7 @@ class MujocoSim:
         mj.mjr_render(viewport, scene, context)
 
         # ── Render oscillator figure overlays ───────────────────────
-        if self.fig_hip is not None and self.enabled_graph:
+        if self.enabled_graph:
             self._update_figures()
             fig_w = viewport_width // 3
             fig_h = viewport_height // 4
@@ -140,32 +274,95 @@ class MujocoSim:
             # Knee plot: above the hip plot
             knee_rect = mj.MjrRect(viewport_width - fig_w, fig_h, fig_w, fig_h)
             mj.mjr_figure(knee_rect, self.fig_knee, context)
+        
+        if self.enabled_joint_graph:
+            self._update_joint_figures()
+
+            fig_w = viewport_width // 3
+            fig_h = viewport_height // 4
+
+            joint_rect = mj.MjrRect(0, 0, fig_w, fig_h)
+            mj.mjr_figure(joint_rect, self.fig_joints, context)
+        
+        elif self.enabled_joint_sliders:
+            self._update_joint_sliders()
+
+            cols = 4
+            slider_w = viewport_width // 10
+            slider_h = viewport_height // 4
+
+            for i, fig in enumerate(self.slide_joints):
+                col = i % cols
+                row = i // cols
+
+                x = col * slider_w
+                y = viewport_height - (row + 1) * slider_h
+
+                rect = mj.MjrRect(x, y, slider_w, slider_h)
+                mj.mjr_figure(rect, fig, context)
+
 
         glfw.swap_buffers(window)
         glfw.poll_events()
+
+    # ── Robot-interface synchronisation ──────────────────────────
+
+    def _sync_robot_interface(self):
+        """Copy MuJoCo sensor data → RobotInterface so controllers see fresh state."""
+        ri = self.robot_interface
+        ri.dt = self.model.opt.timestep
+
+        pos = {joint: float(self.data.sensordata[idx])
+               for joint, idx in SENSOR_POS_DICT.items()}
+        vel = {joint: float(self.data.sensordata[idx])
+               for joint, idx in SENSOR_VEL_DICT.items()}
+        ri.joint_positions = pos
+        ri.joint_velocities = vel
+        ri.body_position = self.data.qpos[0:3].tolist()
+        ri.body_orientation = self.data.qpos[3:7].tolist()
+
+    def _apply_controller_targets(self):
+        """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
+        targets = self.robot_interface.target_positions
+        for joint, act_idx in ACTUATOR_DICT.items():
+            if joint in targets:
+                self.data.ctrl[act_idx] = targets[joint]
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
         Main simulation loop.
         Args:
-            controller: An object which has two methods init_controller(model, data) and control(model, data). The former is called once at the beginning of the simulation, and the latter is called at every simulation step.
-            sim_length: Duration of the simulation in seconds. If negative, runs indefinitely until window is closed.
-            slow_factor: Slow-motion factor. 1.0 = real-time, 2.0 = half speed, 5.0 = 5x slower, etc.
+            controller: An object with a `run()` method (no model/data args).
+                        Communication goes through self.robot_interface.
+            sim_length: Duration of the simulation in seconds. If negative,
+                        runs indefinitely until window is closed.
+            slow_factor: Slow-motion factor. 1.0 = real-time, 2.0 = half speed.
         """
         window, cam, opt, scene, context = self.init_graphics()
 
-        # Initialize and set controller
+        # Set timestep on robot_interface once
+        self.robot_interface.dt = self.model.opt.timestep
+
+        # Register controller helpers (keyboard, oscillator overlay)
         if controller is not None:
-            controller.init_controller(self.model, self.data)
-            # Register controller's keyboard callback if it has one
             if hasattr(controller, 'keyboard_callback'):
                 self.controller_keyboard_callback = controller.keyboard_callback
-            # Set up oscillator figure overlay if controller supports it
-            # if hasattr(controller, 'get_oscillator_outputs'):
-            #     self._fig_controller = controller
-            #     self._init_figures()
+            if hasattr(controller, 'get_oscillator_outputs'):
+                self._fig_controller = controller
 
-        mj.set_mjcb_control(controller.run if controller is not None else None)
+        # Build mjcb_control callback: sync → run controller → apply targets
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            self._apply_controller_targets()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
 
         # Main loop
         while not glfw.window_should_close(window):
@@ -174,6 +371,7 @@ class MujocoSim:
             # Simulate at 60 Hz, scaled by slow_factor
             while (self.data.time - time_prev < 1.0 / (60.0 * slow_factor)):
                 mj.mj_step(self.model, self.data)
+                self._accumulate_energy()
 
             if sim_length > 0 and self.data.time >= sim_length:
                 break
@@ -266,7 +464,57 @@ class MujocoSim:
     
     def enable_graph(self):
         if self.fig_hip is None:
-            if hasattr(self.controller, 'get_oscillator_outputs'):
-                self._fig_controller = self.controller
-                self._init_figures()
+            self._init_figures()
             self.enabled_graph = True
+            # self.enabled_joint_graph = False
+    
+    def enable_joint_graph(self):
+        if self.fig_joints is None:
+            self._init_joint_figures()
+
+        self.enabled_joint_graph = True
+        self.enabled_joint_sliders = False
+
+
+    def enable_joint_sliders(self):
+        if self.slide_joints is None:
+            self._init_joint_sliders()
+ 
+        self.enabled_joint_sliders = True
+        self.enabled_joint_graph = False
+
+    def _accumulate_energy(self):
+        """
+        Accumulate positive mechanical work from actuators.
+        """
+        dt = self.model.opt.timestep
+
+        tau = self.data.actuator_force.copy()
+
+        # Actuator torques correspond to DOFs in qvel
+        qdot = self.data.qvel[:len(tau)]
+
+        mechanical_power = tau * qdot
+
+        # Only count positive work (realistic motor assumption)
+        positive_power = np.maximum(mechanical_power, 0.0)
+
+        self._energy += np.sum(positive_power) * dt
+    
+    def compute_CoT(self):
+        """
+        Compute Cost of Transport (dimensionless).
+        """
+        if self._start_x is None:
+            return None
+
+        current_x = self.data.qpos[0]   # base x position
+        distance = current_x - self._start_x
+
+        if distance <= 0:
+            return None
+
+        g = 9.81
+        cot = self._energy / (self._robot_mass * g * distance)
+
+        return cot
