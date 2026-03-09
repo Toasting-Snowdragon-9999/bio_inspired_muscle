@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.global_constants import (
     LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
     ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
-    SENSOR_VEL_DICT, ACTUATOR_DICT)
+    SENSOR_VEL_DICT, ACTUATOR_DICT, NEURON_TO_FOOT_DICT, Foot
+)
 from shared_module.robot_state import Joint, RobotInterface
 
 class MujocoSim:
@@ -75,6 +76,7 @@ class MujocoSim:
         glfw.set_cursor_pos_callback(window, self.mouse_move)
         glfw.set_mouse_button_callback(window, self.mouse_button)
         glfw.set_scroll_callback(window, self.scroll)
+        glfw.focus_window(window)
 
         return window, self.cam, opt, self.scene, context
 
@@ -320,6 +322,15 @@ class MujocoSim:
         ri.joint_velocities = vel
         ri.body_position = self.data.qpos[0:3].tolist()
         ri.body_orientation = self.data.qpos[3:7].tolist()
+        ri.foot_positions = {
+            foot: self.data.body(foot.value).xpos.tolist()
+            for foot in Foot
+        }
+        # # Debug print for foot positions and joint positions
+        # joint_list = [Joint.FR_HIP, Joint.FR_THIGH, Joint.FR_CALF]
+        # pos_list = [pos[joint] for joint in joint_list]
+        # print("Foot positions:", ri.foot_positions[Foot.FR])
+        # print("Joint positions:", pos_list)
 
     def _apply_controller_targets(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""

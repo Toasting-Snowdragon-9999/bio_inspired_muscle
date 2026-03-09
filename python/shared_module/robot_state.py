@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
 
-
 class Gait(Enum):
     WALK   = (0.0, np.pi/2, np.pi, 3*np.pi/2)
     TROT   = (0.0, np.pi,   0.0,   np.pi)
@@ -14,12 +13,12 @@ class Gait(Enum):
     def __str__(self):
         return self.name
 
+    def __value__(self):
+        return self._value_
 
 class Mode(Enum):
-    STILL = 1
-    MOVING = 2
-    TRANSITION = 3
-    DOWN = 4
+    MOVING = 1
+    TRANSITION = 2
 
     def __str__(self):
         return self.name
@@ -53,6 +52,11 @@ class Joint(Enum):
     def __str__(self):
         return self.name
 
+class Foot(Enum):
+    FL = 'FL_foot'
+    FR = 'FR_foot'
+    RL = 'RL_foot'
+    RR = 'RR_foot'
 
 @dataclass
 class RobotState:
@@ -77,6 +81,7 @@ class RobotInterface:
         self._body_position: list[float] = []
         self._body_orientation: list[float] = []
         self._target_positions: dict[Joint, float] = {}
+        self._foot_positions: dict[str, list[float]] = {}
         self._initialized = True
         self._dt = None
 
@@ -139,6 +144,14 @@ class RobotInterface:
     @body_orientation.setter
     def body_orientation(self, body_orientation: list[float]):
         self._body_orientation = body_orientation
+
+    @property
+    def foot_positions(self) -> dict[Foot, list[float]]:
+        return self._foot_positions
+
+    @foot_positions.setter
+    def foot_positions(self, foot_positions: dict[Foot, list[float]]):
+        self._foot_positions.update(foot_positions)
 
     @property
     def target_positions(self) -> dict[Joint, float]:

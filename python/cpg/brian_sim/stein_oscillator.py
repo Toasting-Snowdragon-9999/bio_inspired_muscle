@@ -62,7 +62,9 @@ class SteinCPGsim:
         # ── Default parameters ──────────────────────────────────────
         freq_hz = 1.0  # intrinsic cycle frequency (Hz)
         self.neurons.omega = freq_hz * 2 * np.pi * Hz
-        self.neurons.amplitude = 1.0
+        step_height = 0.02  # m
+        multiplier = 1.0  # scale up to increase step height
+        self.neurons.amplitude = step_height * multiplier
         self.neurons.coupling_input = 0 * Hz
 
         # ── Coupling weights (rad/s) ───────────────────────────────
