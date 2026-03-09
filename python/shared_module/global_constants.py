@@ -1,8 +1,9 @@
 import numpy as np
+from enum import Enum
 try:
-    from robot_state import RobotState, State, Joint, Gait
+    from robot_state import RobotState, State, Joint, Gait, Foot
 except ModuleNotFoundError:
-    from shared_module.robot_state import RobotState, State, Joint, Gait
+    from shared_module.robot_state import RobotState, State, Joint, Gait, Foot
 
 # ── Joint ranges (radians) ──────────────────────────────────────
 KNEE_POS_RANGE      = (-2.7227, -0.83776)
@@ -16,6 +17,13 @@ MID_FRONT_HIP_POS = np.mean(FRONT_HIP_POS_RANGE)
 MID_ABDUCTION_POS = np.mean(ABDUCTION_POS_RANGE)
 
 NEURON_CNT = 4
+
+NEURON_TO_FOOT_DICT = {
+    0: Foot.FL,
+    1: Foot.FR,
+    2: Foot.RR,
+    3: Foot.RL
+}
 
 ACTUATOR_DICT = {
     Joint.FR_HIP: 0,   Joint.FR_THIGH: 1,  Joint.FR_CALF: 2,
@@ -53,5 +61,10 @@ ENERGY_EFFICIENT_FREQ = {
     Gait.PACE: 0.8,
     Gait.GALLOP: 1.2,
 }
+
+NEURON_POSITION = {
+    0: ''
+}
+
 
 LEG_LABELS = ['FL', 'FR', 'RR', 'RL']
