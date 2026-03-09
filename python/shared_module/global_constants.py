@@ -12,6 +12,29 @@ MID_FRONT_HIP_POS = np.mean(FRONT_HIP_POS_RANGE)
 MID_ABDUCTION_POS = np.mean(ABDUCTION_POS_RANGE)
 
 # ── Actuator / sensor index maps ────────────────────────────────
+
+FRONT_LEGS = [
+    'front_right_hip'  , 'front_left_hip',
+    'front_right_thigh', 'front_left_thigh',
+    'front_right_calf' , 'front_left_calf'
+]
+REAR_LEGS = [
+    'rear_right_hip'  , 'rear_left_hip',
+    'rear_right_thigh', 'rear_left_thigh',
+    'rear_right_calf' , 'rear_left_calf'
+]
+RIGHT_LEGS = [
+    'rear_right_hip'  , 'front_right_hip',
+    'rear_right_thigh', 'front_right_thigh',
+    'rear_right_calf' , 'front_right_calf'
+]
+LEFT_LEGS = [
+    'rear_left_hip'  , 'front_left_hip',
+    'rear_left_thigh', 'front_left_thigh',
+    'rear_left_calf' , 'front_left_calf'
+]
+
+
 ACTUATOR_DICT = {
     'front_right_hip': 0,   'front_right_thigh': 1,  'front_right_calf': 2,
     'front_left_hip': 3,    'front_left_thigh': 4,   'front_left_calf': 5,
@@ -38,13 +61,6 @@ OSCILLATOR_TO_THIGH = {
     1: 'front_right_thigh',
     2: 'rear_right_thigh',
     3: 'rear_left_thigh',
-}
-
-OSCILLATOR_TO_CALF = {
-    0: 'front_left_calf',
-    1: 'front_right_calf',
-    2: 'rear_right_calf',
-    3: 'rear_left_calf',
 }
 
 GAITS = {

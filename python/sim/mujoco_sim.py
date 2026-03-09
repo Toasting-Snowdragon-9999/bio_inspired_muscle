@@ -134,6 +134,10 @@ class MujocoSim:
             print(f'cam.azimuth={cam.azimuth}; cam.elevation={cam.elevation}; cam.distance={cam.distance}')
             print(f'cam.lookat=np.array([{cam.lookat[0]}, {cam.lookat[1]}, {cam.lookat[2]}])')
 
+        self.cam.lookat[0] = self.data.qpos[0]
+        self.cam.lookat[1] = self.data.qpos[1]
+        self.cam.lookat[2] = self.data.qpos[2]
+
         mj.mjv_updateScene(model, data, opt, None, cam, mj.mjtCatBit.mjCAT_ALL.value, scene)
         mj.mjr_render(viewport, scene, context)
 

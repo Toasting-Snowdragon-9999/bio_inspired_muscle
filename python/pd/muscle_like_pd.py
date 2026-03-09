@@ -37,7 +37,6 @@ import mujoco as mj
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.global_constants import *
 
-
 # ── Output directory for test artefacts ─────────────────────────
 _OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'output_images')
 os.makedirs(_OUTPUT_DIR, exist_ok=True)
@@ -92,12 +91,19 @@ class MusclePdController:
         self.data: Optional[mj.MjData] = None
         self.dt: Optional[float] = None
 
+        self.start_time = None
+        self.settle_duration = 0.2
+        self.stand_duration = 1.0
+
+
     # MuJoCo bootstrap
     def init_controller(self, model: mj.MjModel, data: mj.MjData) -> None:
         """Called once by MujocoSim before the simulation loop."""
         self.model = model
         self.data = data
         self.dt = model.opt.timestep
+        self.start_time = data.time
+
 
         # Load 'home' keyframe for a stable starting pose
         key_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_KEY, 'home')
@@ -142,40 +148,7 @@ class MusclePdController:
         zeta = self.kd / (2.0 * np.sqrt(self.kp * I))
         return zeta
 
-    # Core torque law 
-
-    # def apply_pd(self, targets: dict[str, float]) -> None:
-    #     """
-    #     Apply control to all actuators listed in *targets*.
-
-    #     * Hip / thigh joints → stiff PD position tracker
-    #     * Calf (knee) joints → passive spring-damper:  τ = k(θ_ref - θ) - d·θ̇
-    #     """
-    #     for joint_name, actuator_idx in ACTUATOR_DICT.items():
-    #         if joint_name not in targets:
-    #             continue
-
-    #         theta = self.data.sensordata[SENSOR_POS_DICT[joint_name]]
-    #         theta_dot = self.data.sensordata[SENSOR_VEL_DICT[joint_name]]
-    #         theta_ref = targets[joint_name]
-            
-    #         if 'calf' in joint_name:
-    #             # Knee: passive spring-damper (muscle-like compliance)
-    #             #    τ = k · (θ_ref − θ) − d · θ̇
-    #             #  No velocity reference — the damper resists all motion.
-    #             torque = self.p * (theta_ref - theta) - self.d * theta_dot
-    #             print(f"Calf: {joint_name}, velocity={theta_dot}")
-    #         else:
-    #             # Hip / thigh: stiff PD tracker
-    #             #    τ = kp · (θ_ref − θ) + kd · (0 − θ̇)
-    #             torque = (
-    #                 self.passive_kp * (theta_ref - theta)
-    #                 + self.passive_kd * (0.0 - theta_dot)
-    #             )
-
-    #         self.data.ctrl[actuator_idx] = torque
-
-    def apply_pd(self, targets: dict[str, float]) -> None:
+    def apply_pd(self, targets: dict[str, float], phases) -> None:
         """
         Apply control to all actuators listed in *targets*.
 
@@ -185,71 +158,170 @@ class MusclePdController:
         tau_max_hip = 23.7
         tau_max_knee = 45.43
 
+        phases = np.array([x % (2*np.pi) for x in phases]) # wrap phases
+
+        # actuator idx
+        # hips: 0, 3, 6, 9
+        # thighs: 1, 4, 7, 10
+        # calves: 2, 5, 8, 11
+
+        # current_time = self.data.time
+
+        # # ---- SETTLE PHASE ----
+        # if current_time - self.start_time < self.settle_duration:
+        #     self.data.ctrl[:] = 0.0
+        #     return
+
+        # # ---- STAND PHASE ----
+        # elif current_time - self.start_time < self.settle_duration + self.stand_duration:
+        #     stand_mode = True
+        # else:
+        #     stand_mode = False
+
+        # for joint_name, actuator_idx in ACTUATOR_DICT.items():
+        #     if joint_name not in targets or 'calf' in joint_name:
+        #         # Calf (knee) control - coordinated with thigh position
+        #         current_thigh_angle = self.data.sensordata[actuator_idx-1]
+        #         calf_ref = self.compute_knee_reference_from_phase(current_thigh_angle, joint_name)
+        #         leg_idx = actuator_idx // 3
+        #         if stand_mode:
+        #             kp = 100
+        #             kd = 20
+        #         else:
+        #             kp, kd = self.get_knee_impedance(phases[leg_idx], joint_name)
+
+        #         tau_calf = self.control_eq(actuator_idx, calf_ref, kp, kd)
+        #         self.data.ctrl[actuator_idx] = np.clip(tau_calf, -tau_max_knee, tau_max_knee)
+
         for joint_name, actuator_idx in ACTUATOR_DICT.items():
-            if joint_name not in targets:
-                # Calf (knee) control - coordinated with thigh position
+            if joint_name not in targets or 'calf' in joint_name:
+                kp = 100
+                kd = 20
                 current_thigh_angle = self.data.sensordata[actuator_idx-1]
-                calf_ref = self.get_knee_trajectory(current_thigh_angle)
-                tau_calf = self.control_eq(actuator_idx, calf_ref, self.kp, self.kd)
+                calf_ref = self.compute_knee_reference_from_phase(current_thigh_angle, joint_name)
+                tau_calf = self.control_eq(actuator_idx, calf_ref, kp, kd)
                 self.data.ctrl[actuator_idx] = np.clip(tau_calf, -tau_max_knee, tau_max_knee)
+
+
             elif 'thigh' in joint_name or 'hip' in joint_name:
                 # Thigh / hip control
                 thigh_ref = targets[joint_name]
+                # tau_thigh = self.control_eq(actuator_idx, thigh_ref, self.passive_kp, self.passive_kd)
+                # if stand_mode:
+                #     tau_thigh = self.control_eq(actuator_idx, thigh_ref, 200, 15)
+                # else:
+                #     tau_thigh = self.control_eq(actuator_idx, thigh_ref, self.passive_kp, self.passive_kd)
+
                 tau_thigh = self.control_eq(actuator_idx, thigh_ref, self.passive_kp, self.passive_kd)
+
                 self.data.ctrl[actuator_idx] = np.clip(tau_thigh, -tau_max_hip, tau_max_hip)
 
     def control_eq(self, joint_id, ref, kp, kd):
 
         return - kp * (self.data.sensordata[joint_id] - ref) - kd * self.data.sensordata[joint_id + 12]
     
-    def get_knee_trajectory(self, thigh_angle):
-        """
-        Generate knee angle based on thigh angle for natural walking motion.
-        
-        When thigh swings forward (larger angle ~1.5-2.0): knee bends more (more negative, ~-2.0 to -2.2) to lift foot
-        When thigh is neutral/back (smaller angle ~0.5-1.0): knee extends (less negative, ~-1.4 to -1.6) for stance
-        
-        Args:
-            thigh_angle: Current thigh joint angle in radians
-            
-        Returns:
-            Target knee angle in radians
-        """
-        # Map thigh angle to knee angle
-        # Thigh range: ~0.5 (back) to ~2.0 (forward)
-        # Knee range: -1.4 (extended) to -2.2 (flexed)
-        
-        # Normalize thigh angle to 0-1 range
-        thigh_min, thigh_max = 0.5, 1.5
-        t = np.clip((thigh_angle - thigh_min) / (thigh_max - thigh_min), 0, 1)
-        
-        # When thigh forward (t=1): knee MUCH MORE flexed (-2.2) to lift foot high
-        # When thigh back (t=0): knee extended (-1.4) for stance/push
-        knee_extended = -1.4  # Less bent for stance
-        knee_flexed = -2.2    # More bent for swing phase
-        
-        return knee_extended + t * (knee_flexed - knee_extended)
+    # def get_knee_impedance(self, phase):
+    #     s = 0.5 * (1 + np.cos(phase - np.pi))
+    #     kp_stance_max = 400 # 200-400
+    #     kp_stance_mod = 180 # 80-180
+    #     kp_stance_min = 60 # 20-60
 
-    # leg_order = [0, 1, 2, 3]  # FR, FL, RR, RL
-    # # all 4 legs
-    # for i, leg_id in enumerate(leg_order):
-    #     hip_id = leg_id * 3 + 0     # hips: 0, 3, 6, 9
-    #     thigh_id = leg_id * 3 + 1   # thighs: 1, 4, 7, 10
-    #     calf_id = leg_id * 3 + 2    # calves: 2, 5, 8, 11
+    #     kd_stance_max = 10 # 6-10
+    #     kd_stance_mod = 5 # 2-5 
+    #     kd_stance_min = 1 # 0.3-1
 
-    #     tau_hip = self.control_eq(hip_id, 0)
-    #     self.data.ctrl[hip_id] = np.clip(tau_hip, -tau_max_hip, tau_max_hip)
+    #     kp = kp_stance_min + (kp_stance_max - kp_stance_min) * s
+    #     kd = kd_stance_min + (kd_stance_max - kd_stance_min) * s
 
-    #     # Thigh control - trot gait pattern
-    #     thigh_ref = self.get_thigh_trot_trajectory(leg_id)
-    #     thigh_ref = 0.8
-    #     if leg_id == 2 or leg_id == 3:
-    #         thigh_ref = 1.0
-    #     tau_thigh = self.control_eq(thigh_id, thigh_ref)
-    #     self.data.ctrl[thigh_id] = np.clip(tau_thigh, -tau_max_hip, tau_max_hip)
+    #     return kp, kd
+    
+    # def get_knee_impedance(self, phi):
+    #     if phi <= np.pi:  # stance
+    #         s = 0.5 * (1 + np.cos(phi - np.pi))
+    #         d = 0.5 * (1 + np.cos(phi))
+
+    #         kp = self.k_stance_min + \
+    #             (self.k_stance_max - self.k_stance_min) * s
+
+    #         kd = self.k_d_stance_min + \
+    #             (self.k_d_stance_max - self.k_d_stance_min) * d
+    #     else:  # swing
+    #         kp = self.k_swing
+    #         kd = self.k_d_swing
+
+    #     return kp, kd
+
+    # def get_knee_impedance(self, phase: float, joint_name: str):
+    #     """
+    #     Phase-dependent knee impedance with front/rear differentiation.
+    #     """
+
+    #     # ---- Front vs Rear tuning ----
+
+    #     if joint_name in FRONT_LEGS:
+    #         # Front legs: more vertical support, slightly more damping
+    #         KP_STANCE_MIN = 180
+    #         KP_STANCE_MAX = 420
+
+    #         KD_STANCE_MIN = 8
+    #         KD_STANCE_MAX = 18
+
+    #         KP_SWING = 15
+    #         KD_SWING = 2
+
+    #     else:
+    #         # Rear legs: more propulsion, slightly more compliant
+    #         KP_STANCE_MIN = 130
+    #         KP_STANCE_MAX = 380
+
+    #         KD_STANCE_MIN = 5
+    #         KD_STANCE_MAX = 12
+
+    #         KP_SWING = 8
+    #         KD_SWING = 1
+
+    #     # ---- Phase logic ----
+
+    #     if phase <= np.pi:
+    #         stance_progress = phase / np.pi
+
+    #         # Cosine peak at mid-stance
+    #         s = 0.5 * (1 - np.cos(2 * np.pi * stance_progress))
+
+    #         kp = KP_STANCE_MIN + (KP_STANCE_MAX - KP_STANCE_MIN) * s
+    #         kd = KD_STANCE_MIN + (KD_STANCE_MAX - KD_STANCE_MIN) * s
+
+    #     else:
+    #         kp = KP_SWING
+    #         kd = KD_SWING
+
+    #     return kp, kd
+
+
+
+    def compute_knee_reference_from_phase(self, phase, joint_name):
+
+        # Define swing window: phase > π
+        if phase > np.pi:
+            swing_progress = (phase - np.pi) / np.pi
+        else:
+            swing_progress = 0.0
+
+        swing_progress = np.clip(swing_progress, 0.0, 1.0)
+
+        knee_stance = 0
+        knee_swing  = 0
+        if joint_name in FRONT_LEGS:
+            knee_stance = -1.55 # more extended
+            knee_swing  = -2.2
+        else:
+            knee_stance = -1.8 # more crouched
+            knee_swing  = -2.4
         
-    #     # Calf (knee) control - coordinated with thigh position
-    #     current_thigh_angle = self.data.sensordata[thigh_id]
-    #     calf_ref = self.get_knee_trajectory(current_thigh_angle)
-    #     tau_calf = self.control_eq(calf_id, calf_ref)
-    #     self.data.ctrl[calf_id] = np.clip(tau_calf, -tau_max_knee, tau_max_knee)
+        # with these settings: rear legs are:
+        # ~0.25 rad (~14°) more flexed in stance
+        # ~0.2 rad (~11°) more flexed in swing
+
+        return knee_stance + swing_progress * (knee_swing - knee_stance)
+
+

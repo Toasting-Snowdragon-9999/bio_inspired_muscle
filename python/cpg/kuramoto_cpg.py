@@ -165,9 +165,12 @@ class KuramotoCpg:
         self.sim_time = data.time
 
         if self.sim_time < self.warmup_seconds:
+            phases = []
+            for i in range(self.neurons_cnt):
+                phases.append(self.neurons[i].phase)
             targets = dict(self.static_targets)
             targets.update(self.standing_targets)
-            self.pd_controller.apply_pd(targets)
+            self.pd_controller.apply_pd(targets, phases)
             return
 
         blend_duration = 1.0  # seconds
@@ -198,7 +201,10 @@ class KuramotoCpg:
         targets.update(cpg_targets)
 
         # 4. PD control
-        self.pd_controller.apply_pd(targets)
+        phases = []
+        for i in range(self.neurons_cnt):
+            phases.append(self.neurons[i].phase)
+        self.pd_controller.apply_pd(targets, phases)
 
 
     def get_oscillator_outputs(self) -> np.ndarray:
