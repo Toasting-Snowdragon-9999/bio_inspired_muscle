@@ -14,10 +14,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'inverse_kinematics'))
 
 from cpg.kuramoto_cpg import KuramotoCpg
-from inverse_kin import LevenbergMarquardtIK, Leg, forward_kinematics, LEG_CONFIG
+from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, Leg, forward_kinematics, LEG_CONFIG
 from shared_module.robot_state import Joint, RobotInterface
 
 
