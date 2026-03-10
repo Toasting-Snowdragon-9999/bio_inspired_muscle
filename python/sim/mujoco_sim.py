@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.global_constants import (
     LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
     ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
-    SENSOR_VEL_DICT, ACTUATOR_DICT)
-from shared_module.robot_state import Joint, RobotInterface
+    SENSOR_VEL_DICT, ACTUATOR_DICT, NEURON_TO_FOOT_DICT
+)
+from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh
 
 class MujocoSim:
     def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0):
@@ -27,6 +28,7 @@ class MujocoSim:
         self.button_right = False
         self.lastx = 0
         self.lasty = 0
+        self.height = 0.0
         
         # Will be set during init_graphics
         self.cam = None
@@ -55,6 +57,9 @@ class MujocoSim:
         self._start_x = None
         self._robot_mass = None
 
+    def get_model_and_data(self):
+        return self.model, self.data
+
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
         glfw.init()
@@ -75,6 +80,7 @@ class MujocoSim:
         glfw.set_cursor_pos_callback(window, self.mouse_move)
         glfw.set_mouse_button_callback(window, self.mouse_button)
         glfw.set_scroll_callback(window, self.scroll)
+        glfw.focus_window(window)
 
         return window, self.cam, opt, self.scene, context
 
@@ -318,8 +324,36 @@ class MujocoSim:
                for joint, idx in SENSOR_VEL_DICT.items()}
         ri.joint_positions = pos
         ri.joint_velocities = vel
-        ri.body_position = self.data.qpos[0:3].tolist()
-        ri.body_orientation = self.data.qpos[3:7].tolist()
+        ri.body_position = self.data.body("base_link").xpos.tolist()
+        ri.body_orientation = self.data.body("base_link").xmat.tolist()  # rotation matrix as flat list
+        ri.thigh_position = {
+            thigh: self.data.body(thigh.value).xpos.tolist()
+            for thigh in Thigh
+        }
+        ri.foot_positions = {
+            foot: self.data.body(foot.value).xpos.tolist()
+            for foot in Foot
+        }
+        ri.hip_position = {
+            hip: self.data.body(hip.value).xpos.tolist()
+            for hip in Hip
+        } 
+
+        hip_stance = {
+            hip: [pos[i] - ri.body_position[i] for i in range(3)]
+            for hip, pos in ri.hip_position.items()
+        }
+        foot_stance = {
+            foot: [pos[i] - ri.body_position[i] for i in range(3)]
+            for foot, pos in ri.foot_positions.items()
+        }
+        ri.stance_positions = {
+            foot: [
+                foot_pos[i] - hip_stance[Hip[foot.name]][i] for i in range(3)
+            ]
+            for foot, foot_pos in foot_stance.items()
+        }
+        print(f"Foot targets: {ri.foot_positions}")
 
     def _apply_controller_targets(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
@@ -379,7 +413,7 @@ class MujocoSim:
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
 
             if self.dispense_in_air:
-                self.enable_air_mode(0.5)
+                self.enable_air_mode(self.height)
 
         glfw.terminate()
 
@@ -454,6 +488,7 @@ class MujocoSim:
     
     def enable_air_mode(self, height=1.0):
         if not self.dispense_in_air:
+            self.height = height
             self.dispense_in_air = True
         self.model.opt.gravity[:] = [0, 0, 0]
         self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]

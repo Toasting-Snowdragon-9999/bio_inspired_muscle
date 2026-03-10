@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
 
-
 class Gait(Enum):
     WALK   = (0.0, np.pi/2, np.pi, 3*np.pi/2)
     TROT   = (0.0, np.pi,   0.0,   np.pi)
@@ -14,12 +13,12 @@ class Gait(Enum):
     def __str__(self):
         return self.name
 
+    def __value__(self):
+        return self._value_
 
 class Mode(Enum):
-    STILL = 1
-    MOVING = 2
-    TRANSITION = 3
-    DOWN = 4
+    MOVING = 1
+    TRANSITION = 2
 
     def __str__(self):
         return self.name
@@ -53,6 +52,32 @@ class Joint(Enum):
     def __str__(self):
         return self.name
 
+class Foot(Enum):
+    FL = 'FL_foot'
+    FR = 'FR_foot'
+    RL = 'RL_foot'
+    RR = 'RR_foot'
+    
+    def __str__(self):
+        return self.name
+
+class Hip(Enum):
+    FL = 'FL_hip'
+    FR = 'FR_hip'
+    RL = 'RL_hip'
+    RR = 'RR_hip' 
+
+    def __str__(self):
+        return self.name
+
+class Thigh(Enum):
+    FL = 'FL_thigh'
+    FR = 'FR_thigh'
+    RL = 'RL_thigh'
+    RR = 'RR_thigh'
+
+    def __str__(self):
+        return self.name
 
 @dataclass
 class RobotState:
@@ -77,6 +102,10 @@ class RobotInterface:
         self._body_position: list[float] = []
         self._body_orientation: list[float] = []
         self._target_positions: dict[Joint, float] = {}
+        self._foot_positions: dict[Foot, list[float]] = {}
+        self._stance_positions: dict[Foot, list[float]] = {}
+        self._hip_position: dict[Hip, list[float]] = {}
+        self._thigh_position: dict[Thigh, list[float]] = {}
         self._initialized = True
         self._dt = None
 
@@ -139,6 +168,38 @@ class RobotInterface:
     @body_orientation.setter
     def body_orientation(self, body_orientation: list[float]):
         self._body_orientation = body_orientation
+
+    @property
+    def foot_positions(self) -> dict[Foot, list[float]]:
+        return self._foot_positions
+
+    @foot_positions.setter
+    def foot_positions(self, foot_positions: dict[Foot, list[float]]):
+        self._foot_positions.update(foot_positions)
+
+    @property
+    def stance_positions(self) -> dict[Foot, list[float]]:
+        return self._stance_positions
+
+    @stance_positions.setter
+    def stance_positions(self, stance_positions: dict[Foot, list[float]]):
+        self._stance_positions.update(stance_positions)
+
+    @property
+    def hip_position(self) -> dict[Hip, list[float]]:
+        return self._hip_position
+
+    @hip_position.setter
+    def hip_position(self, hip_position: dict[Hip, list[float]]):
+        self._hip_position.update(hip_position)
+
+    @property
+    def thigh_position(self) -> dict[Thigh, list[float]]:
+        return self._thigh_position
+
+    @thigh_position.setter
+    def thigh_position(self, thigh_position: dict[Thigh, list[float]]):
+        self._thigh_position.update(thigh_position)
 
     @property
     def target_positions(self) -> dict[Joint, float]:
