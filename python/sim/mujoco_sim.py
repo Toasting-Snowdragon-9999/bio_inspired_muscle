@@ -353,7 +353,6 @@ class MujocoSim:
             ]
             for foot, foot_pos in foot_stance.items()
         }
-        print(f"Foot targets: {ri.foot_positions}")
 
     def _apply_controller_targets(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
