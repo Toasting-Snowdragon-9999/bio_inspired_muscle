@@ -7,7 +7,6 @@ from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from python import sim
 from shared_module.global_constants import (
     LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
     ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
@@ -382,11 +381,11 @@ class MujocoSim:
                 .replace('THIGH', 'thigh_joint')
                 .replace('CALF', 'calf_joint')
             )
-            joint_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
-            qpos_adr = sim.model.jnt_qposadr[joint_id]
+            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+            qpos_adr = self.model.jnt_qposadr[joint_id]
             # start_angle = current_joint_pos[joint]
             # angle = (1 - alpha) * start_angle + alpha * target_angle
-            sim.data.qpos[qpos_adr] = target_angle
+            self.data.qpos[qpos_adr] = target_angle
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
