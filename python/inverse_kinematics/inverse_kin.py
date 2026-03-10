@@ -577,21 +577,13 @@ from enum import Enum, auto
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from shared_module.robot_state import Joint
+from shared_module.robot_state import Joint, Foot
 from shared_module.global_constants import (
     ABDUCTION_POS_RANGE,
     FRONT_HIP_POS_RANGE,
     BACK_HIP_POS_RANGE,
     KNEE_POS_RANGE
 )
-
-
-class Leg(Enum):
-    FL = auto()
-    FR = auto()
-    RR = auto()
-    RL = auto()
-
 
 # ── Go2 leg geometry (meters) ─────────────────────────────
 
@@ -600,16 +592,16 @@ L_CALF = 0.213
 
 
 LEG_CONFIG = {
-    Leg.FL: {'d_y':  0.141490825432425, 'joints': (Joint.FL_HIP, Joint.FL_THIGH, Joint.FL_CALF), 'hip_range': FRONT_HIP_POS_RANGE},
-    Leg.FR: {'d_y': -0.141490825432425, 'joints': (Joint.FR_HIP, Joint.FR_THIGH, Joint.FR_CALF), 'hip_range': FRONT_HIP_POS_RANGE},
-    Leg.RL: {'d_y':  0.141490825432425, 'joints': (Joint.RL_HIP, Joint.RL_THIGH, Joint.RL_CALF), 'hip_range': BACK_HIP_POS_RANGE},
-    Leg.RR: {'d_y': -0.141490825432425, 'joints': (Joint.RR_HIP, Joint.RR_THIGH, Joint.RR_CALF), 'hip_range': BACK_HIP_POS_RANGE},
+    Foot.FL: {'d_y':  0.141490825432425, 'joints': (Joint.FL_HIP, Joint.FL_THIGH, Joint.FL_CALF), 'hip_range': FRONT_HIP_POS_RANGE},
+    Foot.FR: {'d_y': -0.141490825432425, 'joints': (Joint.FR_HIP, Joint.FR_THIGH, Joint.FR_CALF), 'hip_range': FRONT_HIP_POS_RANGE},
+    Foot.RL: {'d_y':  0.141490825432425, 'joints': (Joint.RL_HIP, Joint.RL_THIGH, Joint.RL_CALF), 'hip_range': BACK_HIP_POS_RANGE},
+    Foot.RR: {'d_y': -0.141490825432425, 'joints': (Joint.RR_HIP, Joint.RR_THIGH, Joint.RR_CALF), 'hip_range': BACK_HIP_POS_RANGE},
 }
 HIP_OFFSETS = {
-    Leg.FL: np.array([0.1934,  0.0465, 0.445]),
-    Leg.FR: np.array([0.1934, -0.0465, 0.445]),
-    Leg.RL: np.array([-0.1934,  0.0465, 0.445]),
-    Leg.RR: np.array([-0.1934, -0.0465, 0.445]),
+    Foot.FL: np.array([0.1934,  0.0465, 0.445]),
+    Foot.FR: np.array([0.1934, -0.0465, 0.445]),
+    Foot.RL: np.array([-0.1934,  0.0465, 0.445]),
+    Foot.RR: np.array([-0.1934, -0.0465, 0.445]),
 }
 
 # ── Forward kinematics ────────────────────────────────────
@@ -637,7 +629,7 @@ def forward_kinematics(q: np.ndarray, d_y: float):
 
 # ── Frame conversion (MuJoCo → IK hip frame) ──────────────
 
-def convert_frame(pos: np.ndarray, leg: Leg):
+def convert_frame(pos: np.ndarray, leg: Foot):
 
     p = pos.copy()
 
@@ -646,9 +638,10 @@ def convert_frame(pos: np.ndarray, leg: Leg):
     # p[2] *= -1
 
     # Rear legs are mounted facing backward
-    if leg in (Leg.RL, Leg.RR):
+    if leg in (Foot.RL, Foot.RR):
         # p[0] *= -1
-        p[1] *= -1
+        # p[1] *= -1
+        pass
 
     return p
 
@@ -690,7 +683,7 @@ class LevenbergMarquardtIK:
 
     def __init__(
         self,
-        leg: Leg,
+        leg: Foot,
         step_size=1.0,
         tol=1e-4,
         damping=0.05,
@@ -797,7 +790,7 @@ def test_ik_from_foot_positions(foot_positions):
         print("After frame conversion:", target_model)
 
         # expected pose from your initial guess
-        init = np.array([0.00156, -0.79, -1.50]) if leg in (Leg.RL, Leg.RR) else np.array([0.00156, 0.79, -1.50])
+        init = np.array([0.00156, -0.79, -1.50]) if leg in (Foot.RL, Foot.RR) else np.array([0.00156, 0.79, -1.50])
 
         fk_init = forward_kinematics(init, d_y)
 
@@ -813,7 +806,7 @@ def test_ik_from_foot_positions(foot_positions):
 
         try:
 
-            if leg in (Leg.RL, Leg.RR):
+            if leg in (Foot.RL, Foot.RR):
                 init = np.array([0.00156, -0.79, -1.50])
             else:
                 init = np.array([0.00156, 0.79, -1.50])
@@ -843,10 +836,10 @@ def test_ik_from_foot_positions(foot_positions):
 if __name__ == "__main__":
 
     foot_targets = {
-        Leg.FL: np.array([0.1795716643722928, 0.14149099862255338, 0.18806348777447116]),
-        Leg.FR: np.array([0.1795716705870714, -0.141490825432425, 0.18806342628408043]),
-        Leg.RL: np.array([-0.26887864336080886, 0.14201085282060438, 0.19723781364348866]),
-        Leg.RR: np.array([-0.26887863626710007, -0.14201177697582473, 0.1972380948189839]),
+        Foot.FL: np.array([0.1795716643722928, 0.14149099862255338, 0.18806348777447116]),
+        Foot.FR: np.array([0.1795716705870714, -0.141490825432425, 0.18806342628408043]),
+        Foot.RL: np.array([-0.26887864336080886, 0.14201085282060438, 0.19723781364348866]),
+        Foot.RR: np.array([-0.26887863626710007, -0.14201177697582473, 0.1972380948189839]),
     }
 
     foot_positions = {
@@ -870,32 +863,32 @@ if __name__ == "__main__":
     base_link_position = [0.00029817604619316766, -1.2558911291640273e-08, 100.0]
 
     stance_positions = {
-        Leg.FL: np.array([-0.01458281454414101, 0.09520361349694849, -0.31155118257490244]),
-        Leg.FR: np.array([-0.014582808367942734, -0.0952034741060266, -0.311551225724358]),
-        Leg.RL: np.array([-0.07616549739558984, 0.0955063386302885, -0.3023549187505239]),
-        Leg.RR: np.array([-0.076165490580238, -0.09550685969947971, -0.30235475609234186]),
+        Foot.FL: np.array([-0.01458281454414101, 0.09520361349694849, -0.31155118257490244]),
+        Foot.FR: np.array([-0.014582808367942734, -0.0952034741060266, -0.311551225724358]),
+        Foot.RL: np.array([-0.07616549739558984, 0.0955063386302885, -0.3023549187505239]),
+        Foot.RR: np.array([-0.076165490580238, -0.09550685969947971, -0.30235475609234186]),
     }
     stance_positions_hipf = {
-        Leg.FL: np.array([ 0.01359,  0.10217, -0.26305]),
-        Leg.FR: np.array([ 0.01359, -0.10217, -0.26305]),
-        Leg.RL: np.array([-0.04041,  0.09929, -0.26944]),
-        Leg.RR: np.array([-0.04041, -0.09929, -0.26944]),
+        Foot.FL: np.array([ 0.01359,  0.10217, -0.26305]),
+        Foot.FR: np.array([ 0.01359, -0.10217, -0.26305]),
+        Foot.RL: np.array([-0.04041,  0.09929, -0.26944]),
+        Foot.RR: np.array([-0.04041, -0.09929, -0.26944]),
     }
     ninety_degree_stance_new = {
-        Leg.FL: np.array([-0.005036816173289977, 0.24416272947995582, 0.008882972842174985]),
-        Leg.FR: np.array([-0.005036819539444062, -0.2441772706603052, 0.008882976190526026]),
-        Leg.RL: np.array([-0.45696953150783753, 0.24128273012130325, 0.01339652496606547]),
-        Leg.RR: np.array([-0.4569698918564412, -0.24129727017798086, 0.013396895780783069]),
+        Foot.FL: np.array([-0.005036816173289977, 0.24416272947995582, 0.008882972842174985]),
+        Foot.FR: np.array([-0.005036819539444062, -0.2441772706603052, 0.008882976190526026]),
+        Foot.RL: np.array([-0.45696953150783753, 0.24128273012130325, 0.01339652496606547]),
+        Foot.RR: np.array([-0.4569698918564412, -0.24129727017798086, 0.013396895780783069]),
     }
     from_cpg = {
-        Leg.FL: np.array([-0.1864, 0.1022, -0.2627]),
-        Leg.FR: np.array([0.2136, -0.1022, -0.2631]),
-        Leg.RL: np.array([0.1596, 0.0993, -0.2694]),
-        Leg.RR: np.array([-0.2404, -0.0993, -0.2691]),
+        Foot.FL: np.array([-0.1864, 0.1022, -0.2627]),
+        Foot.FR: np.array([0.2136, -0.1022, -0.2631]),
+        Foot.RL: np.array([0.1596, 0.0993, -0.2694]),
+        Foot.RR: np.array([-0.2404, -0.0993, -0.2691]),
     }
 #      FL  x: -0.1864  y:  0.1022  z: -0.2627
 #  FR  x:  0.2136  y: -0.1022  z: -0.2631
 #  RL  x:  0.1596  y:  0.0993  z: -0.2694
 #  RR  x: -0.2404  y: -0.0993  z: -0.2691
 
-    test_ik_from_foot_positions(from_cpg)
+    test_ik_from_foot_positions(stance_positions_hipf)
