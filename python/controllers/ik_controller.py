@@ -5,13 +5,20 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from cpg.kuramoto_cpg import KuramotoCpg
-from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, forward_kinematics, LEG_CONFIG, Leg
+from inverse_kinematics.inverse_kin import *
 from shared_module.robot_state import Joint, RobotInterface, Foot
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
 from cpg.trajectory_builder import TrajectoryBuilder
 
 # Home joint configuration used to compute rest foot positions
-_HOME_Q = np.array([0.0, 0.9, -1.8])
+# _HOME_Q = np.array([0.0, 0.9, -1.8])
+
+home_position = { # IN JOINT ANGLES
+    Foot.FL: np.array([ 1.56000000e-03, 8.51601985e-01, -1.80657050e+00]),
+    Foot.FR: np.array([ 1.56000000e-03, 8.52830942e-01, -1.80920322e+00]),
+    Foot.RL: np.array([ 1.56000000e-03, 1.02456780e+00, -1.75184535e+00]),
+    Foot.RR: np.array([ 1.56000000e-03, 1.02612405e+00, -1.75448753e+00]),
+}
 
 
 class IKController:
@@ -33,16 +40,15 @@ class IKController:
 
         self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height)
 
-        # Per-leg IK solvers and warm-start caches
-        self._ik_solvers: dict[Foot, LevenbergMarquardtIK] = {}
-        self._prev_q: dict[Foot, np.ndarray] = {}
+        # ===== IK =====
+        self.solvers = {}
+        self.prev_q = {}
 
-        for osc_idx, foot in NEURON_TO_FOOT_DICT.items():
-            cfg = LEG_CONFIG[foot]
-            self._ik_solvers[foot] = LevenbergMarquardtIK(leg=foot)
-            self._prev_q[foot] = _HOME_Q.copy()
-            # Register home foot position with the CPG
-            self.home_foot = forward_kinematics(_HOME_Q, cfg['d_y'])
+        for foot in Foot:
+            self.solvers[foot] = LevenbergMarquardtIK(foot)
+            self.prev_q[foot] = home_position[foot]
+
+        # ===== IK END =====
 
     def run(self) -> None:
         """
@@ -52,25 +58,20 @@ class IKController:
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         foot_targets = self.traj_builder.build_trajectory(phase_outputs)
+
+        # ===== IK =====
         joint_targets: dict[Joint, float] = {}
+        for foot in Foot:
+            goal_pos = foot_targets[foot]
+            goal_pos = convert_frame(goal_pos, foot) # most important step
 
-        for foot, foot_pos in foot_targets.items():
+            q_result = self.solvers[foot].calculate(goal_pos, init_q=self.prev_q[foot])
+            self.prev_q[foot] = q_result # update previous config
 
-            try:
-                joint_angles = self._ik_solvers[foot].calculate(
-                    goal=foot_pos,
-                    init_q=self._prev_q[foot],
-                )
-                self._prev_q[foot] = np.array(list(joint_angles.values()))
-
-            except RuntimeError:
-                # IK diverged — hold previous solution
-                joint_angles = {
-                    j: float(q)
-                    for j, q in zip(LEG_CONFIG[foot]['joints'], self._prev_q[foot])
-                }
-
-            joint_targets.update(joint_angles)
+            for joint, angle in q_result.items():
+                joint_targets[joint] = angle
+            
+        # ===== IK END =====
 
         self.robot_interface.target_positions = joint_targets
 
