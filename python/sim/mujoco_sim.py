@@ -7,6 +7,7 @@ from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from python import sim
 from shared_module.global_constants import (
     LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
     ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
@@ -318,10 +319,26 @@ class MujocoSim:
         ri = self.robot_interface
         ri.dt = self.model.opt.timestep
 
-        pos = {joint: float(self.data.sensordata[idx])
-               for joint, idx in SENSOR_POS_DICT.items()}
+        QPOS_DICT = {}
+        for joint in Joint:
+            joint_name = (
+                joint.name
+                .replace('HIP', 'hip_joint')
+                .replace('THIGH', 'thigh_joint')
+                .replace('CALF', 'calf_joint')
+            )
+
+            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+            QPOS_DICT[joint] = self.model.jnt_qposadr[joint_id]
+
+        pos = {
+            joint: float(self.data.qpos[idx])
+            for joint, idx in QPOS_DICT.items()
+        }
+        
         vel = {joint: float(self.data.sensordata[idx])
                for joint, idx in SENSOR_VEL_DICT.items()}
+        
         ri.joint_positions = pos
         ri.joint_velocities = vel
         ri.body_position = self.data.body("base_link").xpos.tolist()
@@ -357,9 +374,19 @@ class MujocoSim:
     def _apply_controller_targets(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
         targets = self.robot_interface.target_positions
-        for joint, act_idx in ACTUATOR_DICT.items():
-            if joint in targets:
-                self.data.ctrl[act_idx] = targets[joint]
+        # current_joint_pos = self.robot_interface.joint_positions
+        for joint, target_angle in targets.items():
+            joint_name = (
+                joint.name
+                .replace('HIP', 'hip_joint')
+                .replace('THIGH', 'thigh_joint')
+                .replace('CALF', 'calf_joint')
+            )
+            joint_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+            qpos_adr = sim.model.jnt_qposadr[joint_id]
+            # start_angle = current_joint_pos[joint]
+            # angle = (1 - alpha) * start_angle + alpha * target_angle
+            sim.data.qpos[qpos_adr] = target_angle
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
