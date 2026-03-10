@@ -1,14 +1,3 @@
-"""
-IKController — foot-trajectory controller using CPG + inverse kinematics.
-
-Architecture:
-    CPG (phase oscillators)  →  Cartesian foot positions per leg
-                             →  LM-IK  →  joint targets
-                             →  RobotInterface.target_positions
-
-MujocoSim reads target_positions from RobotInterface and writes data.ctrl.
-"""
-
 import os
 import sys
 import numpy as np
@@ -16,6 +5,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from cpg.kuramoto_cpg import KuramotoCpg
+<<<<<<< Updated upstream
 from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, Leg, forward_kinematics, LEG_CONFIG
 from shared_module.robot_state import Joint, RobotInterface
 
@@ -27,6 +17,12 @@ _OSC_TO_LEG = {
     2: Leg.RR,
     3: Leg.RL,
 }
+=======
+from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, forward_kinematics, LEG_CONFIG
+from shared_module.robot_state import Joint, RobotInterface, Foot
+from shared_module.global_constants import NEURON_TO_FOOT_DICT
+from cpg.trajectory_builder import TrajectoryBuilder
+>>>>>>> Stashed changes
 
 # Home joint configuration used to compute rest foot positions
 _HOME_Q = np.array([0.0, 0.9, -1.8])
@@ -35,12 +31,8 @@ _HOME_Q = np.array([0.0, 0.9, -1.8])
 class IKController:
     """
     Foot-trajectory controller combining Kuramoto CPG and Levenberg-Marquardt IK.
-
     The CPG produces Cartesian foot positions; IK converts them to joint angles.
-    stride_length and step_height are passed to the CPG and control trajectory size.
-    Results are written to robot_interface.target_positions every timestep.
     """
-
     def __init__(
         self,
         robot_interface: RobotInterface,
@@ -58,19 +50,18 @@ class IKController:
             warmup_seconds=warmup_seconds,
         )
 
+        self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height, z_value_ground_offset=0.0)
+
         # Per-leg IK solvers and warm-start caches
-        self._ik_solvers: dict[Leg, LevenbergMarquardtIK] = {}
-        self._prev_q: dict[Leg, np.ndarray] = {}
+        self._ik_solvers: dict[Foot, LevenbergMarquardtIK] = {}
+        self._prev_q: dict[Foot, np.ndarray] = {}
 
-        for osc_idx, leg in _OSC_TO_LEG.items():
-            cfg = LEG_CONFIG[leg]
-            self._ik_solvers[leg] = LevenbergMarquardtIK(leg=leg)
-            self._prev_q[leg] = _HOME_Q.copy()
+        for osc_idx, foot in NEURON_TO_FOOT_DICT.items():
+            cfg = LEG_CONFIG[foot]
+            self._ik_solvers[foot] = LevenbergMarquardtIK(leg=foot)
+            self._prev_q[foot] = _HOME_Q.copy()
             # Register home foot position with the CPG
-            home_foot = forward_kinematics(_HOME_Q, cfg['d_y'])
-            self.cpg.set_foot_home(osc_idx, home_foot)
-
-    # ── Public interface (called by MujocoSim callback) ──────────
+            self.home_foot = forward_kinematics(_HOME_Q, cfg['d_y'])
 
     def run(self) -> None:
         """
@@ -78,35 +69,34 @@ class IKController:
         Called once per simulation timestep via mjcb_control.
         """
         self.cpg.run()
-
-        foot_targets = self.cpg.get_targets()
+        phase_outputs = self.cpg.get_phase_outputs()
+        foot_targets = self.traj_builder.build_trajectory(phase_outputs)
         targets: dict[Joint, float] = {}
 
-        for osc_idx, foot_pos in foot_targets.items():
-            leg = _OSC_TO_LEG[osc_idx]
+        for foot, foot_pos in foot_targets.items():
 
             try:
-                joint_angles = self._ik_solvers[leg].calculate(
+                joint_angles = self._ik_solvers[foot].calculate(
                     goal=foot_pos,
-                    init_q=self._prev_q[leg],
+                    init_q=self._prev_q[foot],
                 )
-                self._prev_q[leg] = np.array(list(joint_angles.values()))
+                self._prev_q[foot] = np.array(list(joint_angles.values()))
+
             except RuntimeError:
                 # IK diverged — hold previous solution
                 joint_angles = {
                     j: float(q)
-                    for j, q in zip(LEG_CONFIG[leg]['joints'], self._prev_q[leg])
+                    for j, q in zip(LEG_CONFIG[foot]['joints'], self._prev_q[foot])
                 }
 
             targets.update(joint_angles)
 
         self.robot_interface.target_positions = targets
 
-    # ── Delegate helpers ─────────────────────────────────────────
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
         """Proxy to CPG for oscillator graph overlay in MujocoSim."""
-        return self.cpg.get_oscillator_outputs()
+        return self.cpg.get_phase_outputs()
 
     def get_targets(self) -> dict[Joint, float]:
         """Return the current joint targets from robot_interface."""
