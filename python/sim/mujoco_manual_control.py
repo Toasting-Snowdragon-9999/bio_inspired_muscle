@@ -121,11 +121,11 @@ class InteractiveController:
                 self.prev_fl = tuple(fl)
 
 def main():
-    xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene_terrain.xml')
+    xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     robot_interface = RobotInterface(State(mode=Mode.MOVING, gait=Gait.NONE))
     controller = InteractiveController(robot_interface)
     sim = MujocoSim(xml_path, robot_interface)
-    sim.enable_air_mode()
+    sim.enable_air_mode(0.5)
     sim.sim(controller=controller, sim_length=-1)
 
 
