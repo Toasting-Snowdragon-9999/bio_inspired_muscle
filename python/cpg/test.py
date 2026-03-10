@@ -16,7 +16,7 @@ def test_cpg_output():
     output = {}
     for step in range(steps):
         cpg.run()
-        output[step] = cpg.get_oscillator_outputs()
+        output[step] = cpg.get_phase_outputs()
     time = np.arange(steps) * robot_interface.dt
     plt.figure(figsize=(10, 6))
     for i in range(cpg.neurons_cnt):
@@ -30,12 +30,6 @@ def test_cpg_output():
 
 def test_trajectory_builder():
     robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
-    robot_interface.foot_positions = {
-        Foot.FL: [0.1795716643722928, 0.14149099862255338, 0.18806348777447116], 
-        Foot.FR: [0.1795716705870714, -0.141490825432425, 0.18806342628408043], 
-        Foot.RL: [-0.26887864336080886, 0.14201085282060438, 0.19723781364348866], 
-        Foot.RR: [-0.26887863626710007, -0.14201177697582473, 0.1972380948189839]
-    }
 
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
@@ -246,7 +240,58 @@ def test_phase_space():
 
     plt.show()
 
+def generate_foot_traj_for_IK():
+    robot_interface = RobotInterface(
+        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5)
+    )
+
+    robot_interface.dt = 0.001
+
+    cpg = KuramotoCpg(robot_interface)
+    builder = TrajectoryBuilder(robot_interface)
+
+    seconds = 20.0
+    steps = int(seconds / robot_interface.dt)
+
+    foot_trajectories = []
+
+    for _ in range(steps):
+        cpg.run()
+        phase = cpg.get_phase_outputs()
+        traj = builder.build_trajectory(phase)
+        foot_trajectories.append(traj)
+
+    pretty_print_foot_positions("Foot position 0", foot_trajectories[steps // 10])
+    
+def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinate]):
+    print(f"\n{title}")
+    print("-" * 40)
+
+    for foot in Foot:
+        pos = foot_positions[foot]
+        print(
+            f"{foot.name:>3}  "
+            f" [{float(pos.x): .4f},  "
+            f"{float(pos.y): .4f},  "
+            f"{float(pos.z): .4f}]"
+        )
+
+    print("-" * 40)
+
+def test_foot_positions():
+    builder = TrajectoryBuilder()
+    foot_targets = {
+        Foot.FL: Coordinate(-0.018626816173289977, 0.14199272947995584, 0.271932972842175),
+        Foot.FR: Coordinate(-0.01862681953944406, -0.1420072706603052, 0.27193297619052603),
+        Foot.RL: Coordinate(-0.41655953150783753, 0.14199273012130323, 0.2828365249660655),
+        Foot.RR: Coordinate(-0.4165598918564412, -0.14200727017798084, 0.2828368957807831)
+    }
+    foot_target = builder.transform_to_hip_coordinates(foot_targets)
+    print(foot_target)
+
 def test_main():
+    generate_foot_traj_for_IK()
+    return
     print("==================================================")
     print("Testing CPG output")
     test_cpg_output()
