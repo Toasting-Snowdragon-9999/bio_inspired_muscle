@@ -8,7 +8,7 @@ from cpg.kuramoto_cpg import KuramotoCpg
 from inverse_kinematics.inverse_kin import *
 from shared_module.robot_state import Joint, RobotInterface, Foot
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
-from cpg.trajectory_builder import TrajectoryBuilder
+from cpg.trajectory_builder import TrajectoryBuilder, Coordinate
 
 # Home joint configuration used to compute rest foot positions
 # _HOME_Q = np.array([0.0, 0.9, -1.8])
@@ -20,6 +20,20 @@ home_position = { # IN JOINT ANGLES
     Foot.RR: np.array([ 1.56000000e-03, 1.02612405e+00, -1.75448753e+00]),
 }
 
+def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinate]):
+    print(f"\n{title}")
+    print("-" * 40)
+
+    for foot in Foot:
+        pos = foot_positions[foot]
+        print(
+            f"{foot.name:>3}  "
+            f" [{float(pos.x): .4f},  "
+            f"{float(pos.y): .4f},  "
+            f"{float(pos.z): .4f}]"
+        )
+
+    print("-" * 40)
 
 class IKController:
     """
@@ -58,21 +72,30 @@ class IKController:
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         foot_targets = self.traj_builder.build_trajectory(phase_outputs)
-
+        pretty_print_foot_positions("foot_positions", foot_targets)
+        targets = {
+            foot: np.array([pos.x, pos.y, pos.z]) 
+                            for foot, pos in foot_targets.items()
+        }
+        
         # ===== IK =====
         joint_targets: dict[Joint, float] = {}
         for foot in Foot:
-            goal_pos = foot_targets[foot]
+            goal_pos = targets[foot]
             goal_pos = convert_frame(goal_pos, foot) # most important step
 
             q_result = self.solvers[foot].calculate(goal_pos, init_q=self.prev_q[foot])
-            self.prev_q[foot] = q_result # update previous config
+            q = []
 
             for joint, angle in q_result.items():
                 joint_targets[joint] = angle
+                q.append(angle)
+            
+            self.prev_q[foot] = np.array(q)
+
             
         # ===== IK END =====
-
+        print(f"JOINT TARGETS: {joint_targets}")
         self.robot_interface.target_positions = joint_targets
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
