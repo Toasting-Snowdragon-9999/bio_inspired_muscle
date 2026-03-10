@@ -31,21 +31,19 @@ class KuramotoCpg:
 
     def __init__(
         self,
-        robot_interface: RobotInterface,
-        stride_length: float = 0.06,
-        step_height: float = 0.04,
-        warmup_seconds: float = 2.0,
+        robot_interface: RobotInterface
     ) -> None:
         self.neurons_cnt = NEURON_CNT  # one oscillator per leg (FL, FR, RR, RL)
         self.robot_interface = robot_interface
-        self.warmup_seconds = warmup_seconds
-        self.sim_time = 0.0
-        self.stride_length = stride_length
-        self.step_height = step_height
+        self.time_passed = 0.0
 
         # Read gait phase offsets and frequency from RobotInterface
-        gait = self.robot_interface.current_gait
-        foot_phases = np.array(gait.value)  # 4-tuple (FL, FR, RR, RL)
+        gait = self.robot_interface.current_gait    
+        if gait is None:
+            # Remove this when transition is implemented since then the gait can dynamically be set and changed
+            raise ValueError("RobotInterface must have a valid gait at CPG initialization.")
+        
+        gait_phases = np.array(gait.value)  # 4-tuple (FL, FR, RR, RL)
         frequency = self.robot_interface.current_state.frequency
 
         # Coupling: all-to-all with uniform strength
@@ -61,11 +59,11 @@ class KuramotoCpg:
 
         # Build pairwise phase-offset matrix from desired gait phases
         self.phase_offsets = np.zeros((self.neurons_cnt, self.neurons_cnt))
-        self._build_phase_offset_matrix(foot_phases)
+        self._build_phase_offset_matrix(gait_phases)
 
         self.neurons = [
             self.Neuron(
-                phase=foot_phases[i],
+                phase=gait_phases[i],
                 frequency=frequency,
                 amplitude=1.0,
             )
@@ -73,19 +71,6 @@ class KuramotoCpg:
         ]
 
         self.d_theta = np.zeros(self.neurons_cnt)
-
-        # Home foot positions in hip-local frame, per oscillator index.
-        # Must be populated via set_foot_home() before run() produces output.
-        self._foot_home: dict[int, np.ndarray] = {}
-
-        # Current output: oscillator index → foot position [x, y, z]
-        self._targets: dict[int, np.ndarray] = {}
-
-    # ── Configuration ───────────────────────────────────────────
-
-    def set_foot_home(self, osc_idx: int, position: np.ndarray) -> None:
-        """Set the rest/home foot position for oscillator osc_idx (hip-local frame)."""
-        self._foot_home[osc_idx] = position.copy()
 
     def set_frequency(self, frequency: float, index: int = None) -> None:
         if index is None:
@@ -103,31 +88,31 @@ class KuramotoCpg:
             for j in range(n):
                 self.phase_offsets[i, j] = desired_phases[j] - desired_phases[i]
 
+    def derivatives(self, thetas: np.ndarray) -> np.ndarray:
+        omegas = np.array([n.frequency * 2 * np.pi for n in self.neurons])
+        coupling = np.zeros(self.neurons_cnt)
+        for i in range(self.neurons_cnt):
+            for j in range(self.neurons_cnt):
+                if i != j:
+                    coupling[i] += (
+                        self.coupling_weights[i, j]
+                        * np.sin(thetas[j] - thetas[i] - self.phase_offsets[i, j])
+                    )
+        return omegas + coupling
+
     def rk4_integration(self, dt: float) -> None:
         """Advance all oscillator phases by one timestep dt using 4th-order Runge-Kutta."""
-        def derivatives(thetas: np.ndarray) -> np.ndarray:
-            omegas = np.array([n.frequency * 2 * np.pi for n in self.neurons])
-            coupling = np.zeros(self.neurons_cnt)
-            for i in range(self.neurons_cnt):
-                for j in range(self.neurons_cnt):
-                    if i != j:
-                        coupling[i] += (
-                            self.coupling_weights[i, j]
-                            * np.sin(thetas[j] - thetas[i] - self.phase_offsets[i, j])
-                        )
-            return omegas + coupling
+
 
         thetas = np.array([n.phase for n in self.neurons])
-        k1 = derivatives(thetas)
-        k2 = derivatives(thetas + 0.5 * dt * k1)
-        k3 = derivatives(thetas + 0.5 * dt * k2)
-        k4 = derivatives(thetas + dt * k3)
+        k1 = self.derivatives(thetas)
+        k2 = self.derivatives(thetas + 0.5 * dt * k1)
+        k3 = self.derivatives(thetas + 0.5 * dt * k2)
+        k4 = self.derivatives(thetas + dt * k3)
         thetas += (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
 
         for i, n in enumerate(self.neurons):
             n.phase = thetas[i]
-
-    # ── Main step ───────────────────────────────────────────────
 
     def run(self) -> None:
         """
@@ -136,40 +121,13 @@ class KuramotoCpg:
         After calling, retrieve targets via get_targets().
         """
         dt = self.robot_interface.dt
-        self.sim_time += dt
-
-        if self.sim_time < self.warmup_seconds:
-            # Hold feet at home position during warmup
-            self._targets = {
-                i: self._foot_home[i].copy()
-                for i in range(self.neurons_cnt)
-                if i in self._foot_home
-            }
-            return
-
-        blend_duration = 1.0  # seconds to ramp from home to full trajectory
-        blend = min(1.0, (self.sim_time - self.warmup_seconds) / blend_duration)
+        self.time_passed += dt
 
         self.rk4_integration(dt)
 
-        for osc_idx in range(self.neurons_cnt):
-            phase = self.neurons[osc_idx].phase
-            home = self._foot_home.get(osc_idx, np.zeros(3))
-
-            dx = -self.stride_length * np.cos(phase)
-            dz = self.step_height * max(0.0, np.sin(phase))
-
-            self._targets[osc_idx] = np.array([
-                home[0] + blend * dx,
-                home[1],                    # lateral stays at home
-                home[2] + blend * dz,
-            ])
-
-    # ── Outputs ─────────────────────────────────────────────────
-
-    def get_targets(self) -> dict[int, np.ndarray]:
-        """Return current foot position targets: oscillator index → [x, y, z] in hip-local frame."""
-        return dict(self._targets)
+    def get_phase_outputs(self) -> np.ndarray:
+        """Return current phase of each oscillator, for graph overlay."""
+        return np.array([n.phase for n in self.neurons])
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -178,10 +136,9 @@ class KuramotoCpg:
             leg_outputs:  shape (4,)  — -sin(θ_i)
             knee_outputs: shape (4,)  — clamped sin(θ_i + knee_offset)
         """
-        leg_out = np.zeros(self.neurons_cnt)
-        knee_out = np.zeros(self.neurons_cnt)
+        outputs = []
         for i in range(self.neurons_cnt):
             phase = self.neurons[i].phase
-            leg_out[i] = -np.sin(phase)
-            knee_out[i] = min(0.0, np.sin(phase + self.knee_phase_offset))
-        return leg_out, knee_out
+            outputs.append(max(np.cos(phase), 0.0)) # Clamp to [0, 1]
+
+        return outputs
