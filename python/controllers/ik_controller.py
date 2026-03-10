@@ -5,24 +5,10 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from cpg.kuramoto_cpg import KuramotoCpg
-<<<<<<< Updated upstream
-from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, Leg, forward_kinematics, LEG_CONFIG
-from shared_module.robot_state import Joint, RobotInterface
-
-
-# Oscillator index → Leg enum (same order as Gait phase tuples: FL, FR, RR, RL)
-_OSC_TO_LEG = {
-    0: Leg.FL,
-    1: Leg.FR,
-    2: Leg.RR,
-    3: Leg.RL,
-}
-=======
 from inverse_kinematics.inverse_kin import LevenbergMarquardtIK, forward_kinematics, LEG_CONFIG
 from shared_module.robot_state import Joint, RobotInterface, Foot
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
 from cpg.trajectory_builder import TrajectoryBuilder
->>>>>>> Stashed changes
 
 # Home joint configuration used to compute rest foot positions
 _HOME_Q = np.array([0.0, 0.9, -1.8])
