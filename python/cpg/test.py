@@ -291,15 +291,17 @@ def test_foot_positions():
 
 def test_main():
     generate_foot_traj_for_IK()
-    return
     print("==================================================")
     print("Testing CPG output")
     test_cpg_output()
     print("==================================================")
+
     print("==================================================")
     print("Testing Trajectory Builder output")
     test_trajectory_builder()
     print("==================================================")
+    return
+
     print("==================================================")
     test_3d()
     print("==================================================")

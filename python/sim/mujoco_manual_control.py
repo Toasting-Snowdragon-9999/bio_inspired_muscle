@@ -49,8 +49,8 @@ class InteractiveController:
         }
 
         # PD gains
-        self.kp = 20.0
-        self.kd = 2.0
+        self.kp = 1.0
+        self.kd = 1.0
 
     def _current_joint_enum(self) -> Joint:
         return self.JOINT_MAP[(self.current_leg, self.current_joint)]

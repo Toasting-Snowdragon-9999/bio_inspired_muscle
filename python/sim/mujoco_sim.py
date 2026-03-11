@@ -29,6 +29,7 @@ class MujocoSim:
         self.lastx = 0
         self.lasty = 0
         self.height = 0.0
+        self.use_pd = False
         
         # Will be set during init_graphics
         self.cam = None
@@ -59,6 +60,9 @@ class MujocoSim:
 
     def get_model_and_data(self):
         return self.model, self.data
+
+    def use_pd_control(self):
+        self.use_pd = True
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -370,7 +374,7 @@ class MujocoSim:
             for foot, foot_pos in foot_stance.items()
         }
 
-    def _apply_controller_targets(self):
+    def _apply_controller_targets_directly(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
         targets = self.robot_interface.target_positions
         # current_joint_pos = self.robot_interface.joint_positions
@@ -386,6 +390,57 @@ class MujocoSim:
             # start_angle = current_joint_pos[joint]
             # angle = (1 - alpha) * start_angle + alpha * target_angle
             self.data.qpos[qpos_adr] = target_angle
+
+    def _apply_controller_targets_torque(self):
+        """
+        Joint-space PD torque controller with gravity compensation.
+        Sends torque commands to MuJoCo motor actuators.
+        """
+
+        targets = self.robot_interface.target_positions
+
+        # Reasonable starting gains for a Go2-scale robot
+        kp = 90.0
+        kd = 15.0
+
+        for joint, target_angle in targets.items():
+
+            # Convert enum name → MuJoCo joint name
+            joint_name = (
+                joint.name
+                .replace('HIP', 'hip_joint')
+                .replace('THIGH', 'thigh_joint')
+                .replace('CALF', 'calf_joint')
+            )
+
+            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+
+            # Joint position address
+            qpos_adr = self.model.jnt_qposadr[joint_id]
+
+            # DOF address (used for velocity + forces)
+            dof_adr = self.model.jnt_dofadr[joint_id]
+
+            actuator_idx = ACTUATOR_DICT[joint]
+
+            # Current state
+            current_angle = float(self.data.qpos[qpos_adr])
+            current_vel   = float(self.data.qvel[dof_adr])
+
+            # MuJoCo bias forces (gravity + coriolis)
+            tau_bias = float(self.data.qfrc_bias[dof_adr])
+
+            # PD control with gravity compensation
+            tau = kp * (target_angle - current_angle) \
+                - kd * current_vel \
+                + tau_bias
+
+            # Respect actuator limits
+            ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_idx]
+            # tau = np.clip(tau, ctrl_min, ctrl_max)
+
+            # Send torque command
+            self.data.ctrl[actuator_idx] = tau
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
@@ -413,7 +468,10 @@ class MujocoSim:
         def _control_callback(model, data):
             self._sync_robot_interface()
             controller.run()
-            self._apply_controller_targets()
+            if self.use_pd:
+                self._apply_controller_targets_torque()
+            else: 
+                self._apply_controller_targets_directly()
 
         mj.set_mjcb_control(_control_callback if controller is not None else None)
 
