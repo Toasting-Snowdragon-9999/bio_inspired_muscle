@@ -13,16 +13,23 @@ class Coordinate:
     z: float
 
 class TrajectoryBuilder:
-    def __init__(self, robot_interface: RobotInterface, width: float = 0.1, height: float = 0.05) -> None:
+    def __init__(self, robot_interface: RobotInterface, width: float = 0.1, height: dict[Foot, float] = {Foot.FL: 0.05, Foot.FR: 0.05, Foot.RL: 0.05, Foot.RR: 0.05}) -> None:
         self.robot_interface = robot_interface
         self.width = width
         self.height = height
+        self.stance_depth = 0.02
         # Stance positions in the Hip frame
         self.stance_positions_hipf = {
             Foot.FL: Coordinate( 0.01359,  0.10217, -0.26305),
             Foot.FR: Coordinate( 0.01359, -0.10217, -0.26305),
             Foot.RL: Coordinate(-0.04041,  0.09929, -0.26944),
             Foot.RR: Coordinate(-0.04041, -0.09929, -0.26944),
+        }
+        self.stance_positions = {
+            Foot.FL: Coordinate(-0.01458281454414101, 0.09520361349694849, -0.31155118257490244),
+            Foot.FR: Coordinate(-0.014582808367942734, -0.0952034741060266, -0.311551225724358),
+            Foot.RL: Coordinate(-0.07616549739558984, 0.0955063386302885, -0.3023549187505239),
+            Foot.RR: Coordinate(-0.076165490580238, -0.09550685969947971, -0.30235475609234186),
         }
 
     def transform_to_world(self, target_foot_pos: dict[Foot, Coordinate]) -> dict[Foot, Coordinate]:
@@ -46,7 +53,7 @@ class TrajectoryBuilder:
         """Convert foot positions from world coordinates to hip-centered coordinates."""
         foot_positions_hip = {}
         for foot, pos in foot_offset.items():
-            stance = self.stance_positions_hipf[foot]
+            stance = self.stance_positions[foot]
             foot_positions_hip[foot] = Coordinate(
             x = stance.x + pos.x,
             y = stance.y + pos.y,
@@ -64,7 +71,14 @@ class TrajectoryBuilder:
 
             y = 0.0  # Keep the current y position unchanged
             x = - self.width * np.cos(theta)
-            z = self.height * max(0.0, np.sin(theta))
+
+            s = np.sin(theta)
+            if s >= 0:
+                z = self.height[foot] * s
+            else:
+                z = self.stance_depth * s
+
+            # z = self.height[foot] * max(0.0, np.sin(theta))
             foot_positions[foot] = Coordinate(x, y, z)
 
         foot_positions = self.transform_relative_world_to_hip(foot_positions)

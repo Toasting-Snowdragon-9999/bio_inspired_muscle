@@ -72,7 +72,6 @@ class IKController:
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         foot_targets = self.traj_builder.build_trajectory(phase_outputs)
-        pretty_print_foot_positions("foot_positions", foot_targets)
         targets = {
             foot: np.array([pos.x, pos.y, pos.z]) 
                             for foot, pos in foot_targets.items()
@@ -95,7 +94,6 @@ class IKController:
 
             
         # ===== IK END =====
-        print(f"JOINT TARGETS: {joint_targets}")
         self.robot_interface.target_positions = joint_targets
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
