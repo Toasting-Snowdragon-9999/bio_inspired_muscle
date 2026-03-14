@@ -25,6 +25,13 @@ NEURON_TO_FOOT_DICT = {
     3: Foot.RL
 }
 
+FOOT_TO_JOINT_DICT = {
+    Foot.FL: [Joint.FL_HIP, Joint.FL_THIGH, Joint.FL_CALF],
+    Foot.FR: [Joint.FR_HIP, Joint.FR_THIGH, Joint.FR_CALF],
+    Foot.RR: [Joint.RR_HIP, Joint.RR_THIGH, Joint.RR_CALF],
+    Foot.RL: [Joint.RL_HIP, Joint.RL_THIGH, Joint.RL_CALF]
+}
+
 ACTUATOR_DICT = {
     Joint.FR_HIP: 0,   Joint.FR_THIGH: 1,  Joint.FR_CALF: 2,
     Joint.FL_HIP: 3,    Joint.FL_THIGH: 4,   Joint.FL_CALF: 5,

@@ -32,8 +32,29 @@ class TrajectoryBuilder:
             Foot.RR: Coordinate(-0.076165490580238, -0.09550685969947971, -0.30235475609234186),
         }
 
-    def transform_to_world(self, target_foot_pos: dict[Foot, Coordinate]) -> dict[Foot, Coordinate]:
-        pass
+    def compute_target_velocities(self, neuron_phases: np.ndarray, neuron_phase_velocities: np.ndarray) -> dict[Foot, Coordinate]:
+        foot_velocities = {}
+        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+
+            theta = neuron_phases[neuron_idx]
+            theta_dot = neuron_phase_velocities[neuron_idx]
+
+            dx = self.width * np.sin(theta) * theta_dot
+
+            s = np.sin(theta)
+            s_dot = np.cos(theta)
+
+            if s >= 0:
+                dz = self.height[foot] * s_dot * theta_dot
+            else:
+                dz = self.stance_depth * s_dot * theta_dot
+
+            dy = 0.0
+
+            foot_velocities[foot] = Coordinate(dx, dy, dz)
+
+        return foot_velocities
+        
 
     def transform_world_to_hip(self, target_world_foot_pos: dict[Foot, Coordinate]) -> dict[Foot, Coordinate]:
         foot_positions_hip = {}
@@ -61,7 +82,7 @@ class TrajectoryBuilder:
         )
         return foot_positions_hip
 
-    def build_trajectory(self, neuron_output) -> Coordinate:
+    def build_trajectory(self, neuron_output, neuron_phase_velocities) -> Coordinate:
         """Convert CPG neuron outputs (phases) to Cartesian foot positions in the hip-local frame.\n
            Make sure the foot_position in RobotInterface is initialized before calling this."""
         foot_positions = {}
@@ -82,5 +103,5 @@ class TrajectoryBuilder:
             foot_positions[foot] = Coordinate(x, y, z)
 
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
-
-        return foot_positions
+        foot_velocities = self.compute_target_velocities(neuron_output, neuron_phase_velocities)
+        return foot_positions, foot_velocities

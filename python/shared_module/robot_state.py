@@ -102,6 +102,8 @@ class RobotInterface:
         self._body_position: list[float] = []
         self._body_orientation: list[float] = []
         self._target_positions: dict[Joint, float] = {}
+        self._target_velocities: dict[Joint, float] = {}
+        self._target_torques: dict[Joint, float] = {}
         self._foot_positions: dict[Foot, list[float]] = {}
         self._stance_positions: dict[Foot, list[float]] = {}
         self._hip_position: dict[Hip, list[float]] = {}
@@ -208,6 +210,22 @@ class RobotInterface:
     @target_positions.setter
     def target_positions(self, target_positions: dict[Joint, float]):
         self._target_positions.update(target_positions)
+
+    @property
+    def target_velocities(self) -> dict[Joint, float]:
+        return self._target_velocities
+    
+    @target_velocities.setter
+    def target_velocities(self, target_velocities: dict[Joint, float]):
+        self._target_velocities.update(target_velocities)
+
+    @property
+    def target_torques(self) -> dict[Joint, float]:
+        return self._target_torques
+    
+    @target_torques.setter
+    def target_torques(self, target_torques: dict[Joint, float]):
+        self._target_torques.update(target_torques)
 
     def update_mode(self, new_mode: Mode):
         if self.robot_state:

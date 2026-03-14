@@ -110,7 +110,7 @@ class KuramotoCpg:
         k3 = self.derivatives(thetas + 0.5 * dt * k2)
         k4 = self.derivatives(thetas + dt * k3)
         thetas += (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
-
+        self.d_theta = k1
         for i, n in enumerate(self.neurons):
             n.phase = thetas[i]
 
@@ -128,6 +128,9 @@ class KuramotoCpg:
     def get_phase_outputs(self) -> np.ndarray:
         """Return current phase of each oscillator, for graph overlay."""
         return np.array([n.phase for n in self.neurons])
+
+    def get_phase_velocities(self) -> np.ndarray:
+        return self.d_theta
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
         """
