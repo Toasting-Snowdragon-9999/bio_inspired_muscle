@@ -647,7 +647,7 @@ def convert_frame(pos: np.ndarray, leg: Foot):
 
 # ── Analytical Jacobian ───────────────────────────────────
 
-def leg_jacobian(q: np.ndarray, d_y: float):
+def leg_jacobian(q: np.ndarray, d_y: float) -> np.ndarray:  
 
     q1, q2, q3 = q
 

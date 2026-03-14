@@ -29,8 +29,9 @@ class MujocoSim:
         self.lastx = 0
         self.lasty = 0
         self.height = 0.0
-        self.use_pd = False
-        
+        self.use_direct = False
+        self.follow_robot = True
+
         # Will be set during init_graphics
         self.cam = None
         self.scene = None
@@ -57,12 +58,17 @@ class MujocoSim:
         self._energy = 0.0
         self._start_x = None
         self._robot_mass = None
+        self.use_bias_compensation = True
 
     def get_model_and_data(self):
         return self.model, self.data
 
-    def use_pd_control(self):
-        self.use_pd = True
+    def use_direct_control(self):
+        self.use_direct = True
+    
+    def set_camera_follow(self, enabled: bool):
+        """Enable or disable camera following the robot."""
+        self.follow_robot = bool(enabled)
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -263,6 +269,10 @@ class MujocoSim:
 
     def simulation_step(self, window, model, data, opt, scene, cam, context):
         """Perform one simulation step and render."""
+        if self.follow_robot:
+            base_pos = data.body("base_link").xpos
+            cam.lookat[:] = base_pos
+
         viewport_width, viewport_height = glfw.get_framebuffer_size(window)
         viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
@@ -273,7 +283,7 @@ class MujocoSim:
         mj.mjv_updateScene(model, data, opt, None, cam, mj.mjtCatBit.mjCAT_ALL.value, scene)
         mj.mjr_render(viewport, scene, context)
 
-        # ── Render oscillator figure overlays ───────────────────────
+        # ── Render oscillator figure overlays ──────────────────────
         if self.enabled_graph:
             self._update_figures()
             fig_w = viewport_width // 3
@@ -322,22 +332,25 @@ class MujocoSim:
         ri = self.robot_interface
         ri.dt = self.model.opt.timestep
 
-        QPOS_DICT = {}
-        for joint in Joint:
-            joint_name = (
-                joint.name
-                .replace('HIP', 'hip_joint')
-                .replace('THIGH', 'thigh_joint')
-                .replace('CALF', 'calf_joint')
-            )
+        # QPOS_DICT = {}
+        # for joint in Joint:
+        #     joint_name = (
+        #         joint.name
+        #         .replace('HIP', 'hip_joint')
+        #         .replace('THIGH', 'thigh_joint')
+        #         .replace('CALF', 'calf_joint')
+        #     )
 
-            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
-            QPOS_DICT[joint] = self.model.jnt_qposadr[joint_id]
+        #     joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+        #     QPOS_DICT[joint] = self.model.jnt_qposadr[joint_id]
 
-        pos = {
-            joint: float(self.data.qpos[idx])
-            for joint, idx in QPOS_DICT.items()
-        }
+        # pos = {
+        #     joint: float(self.data.qpos[idx])
+        #     for joint, idx in QPOS_DICT.items()
+        # }
+
+        pos = {joint: float(self.data.sensordata[idx])
+               for joint, idx in SENSOR_POS_DICT.items()}
         
         vel = {joint: float(self.data.sensordata[idx])
                for joint, idx in SENSOR_VEL_DICT.items()}
@@ -393,19 +406,13 @@ class MujocoSim:
 
     def _apply_controller_targets_torque(self):
         """
-        Joint-space PD torque controller with gravity compensation.
-        Sends torque commands to MuJoCo motor actuators.
+        Apply torque commands from RobotInterface to MuJoCo actuators.
         """
 
-        targets = self.robot_interface.target_positions
+        torques = self.robot_interface.target_torques
 
-        # Reasonable starting gains for a Go2-scale robot
-        kp = 90.0
-        kd = 15.0
+        for joint, tau_cmd in torques.items():
 
-        for joint, target_angle in targets.items():
-
-            # Convert enum name → MuJoCo joint name
             joint_name = (
                 joint.name
                 .replace('HIP', 'hip_joint')
@@ -415,32 +422,25 @@ class MujocoSim:
 
             joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
 
-            # Joint position address
-            qpos_adr = self.model.jnt_qposadr[joint_id]
-
-            # DOF address (used for velocity + forces)
             dof_adr = self.model.jnt_dofadr[joint_id]
 
             actuator_idx = ACTUATOR_DICT[joint]
 
-            # Current state
-            current_angle = float(self.data.qpos[qpos_adr])
-            current_vel   = float(self.data.qvel[dof_adr])
-
             # MuJoCo bias forces (gravity + coriolis)
-            tau_bias = float(self.data.qfrc_bias[dof_adr])
+            tau_bias = float(self.data.qfrc_bias[dof_adr]) if self.use_bias_compensation else 0.0
 
-            # PD control with gravity compensation
-            tau = kp * (target_angle - current_angle) \
-                - kd * current_vel \
-                + tau_bias
+            # Apply controller torque + gravity compensation
+            tau = tau_cmd + tau_bias
 
             # Respect actuator limits
             ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_idx]
-            # tau = np.clip(tau, ctrl_min, ctrl_max)
+            tau = np.clip(tau, ctrl_min, ctrl_max)
 
             # Send torque command
             self.data.ctrl[actuator_idx] = tau
+
+    def set_bias_compensation(self, enabled: bool = True):
+        self.use_bias_compensation = bool(enabled)
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
@@ -468,10 +468,10 @@ class MujocoSim:
         def _control_callback(model, data):
             self._sync_robot_interface()
             controller.run()
-            if self.use_pd:
-                self._apply_controller_targets_torque()
-            else: 
+            if self.use_direct:
                 self._apply_controller_targets_directly()
+            else: 
+                self._apply_controller_targets_torque()
 
         mj.set_mjcb_control(_control_callback if controller is not None else None)
 
