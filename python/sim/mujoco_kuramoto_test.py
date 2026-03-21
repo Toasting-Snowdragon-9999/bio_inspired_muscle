@@ -23,7 +23,7 @@ def main():
         Foot.RL: 0.1,
         Foot.RR: 0.1
     }
-    controller = IKController(robot_interface=robot_interface, stride_length=0.1, step_height=step_height, use_adaptive_pd=True)
+    controller = IKController(robot_interface=robot_interface, stride_length=0.1, step_height=step_height, use_adaptive_pd=False)
     sim.sim(controller=controller, sim_length=-1, slow_factor=1.0)
 
     cot = sim.compute_CoT()

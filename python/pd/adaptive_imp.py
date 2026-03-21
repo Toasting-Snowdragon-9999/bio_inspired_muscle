@@ -6,21 +6,23 @@ Biomimetic Intelligence and Robotics, 3(2), [100100]. https://doi.org/10.1016/j.
 import numpy as np
 import numpy.linalg as la
 
-class ada_imp_con( ):
+class ada_imp_ctrl( ):
     """Online impedance adaptation"""
     def __init__(self, dof, use_ioac=True):
 
-        self.DOF = dof# degree of freedom of a robot arm
+        self.DOF = dof
 
-        self.k_mat = np.mat(np.zeros((self.DOF, self.DOF)))#stiffness parameter matrix
-        self.b_mat = np.mat(np.zeros((self.DOF, self.DOF)))#damping parameter matrix
-        self.ff_tau_mat = np.mat(np.zeros((self.DOF, 1)))
+        # Use ndarray everywhere
+        self.k_mat = np.zeros((self.DOF, self.DOF))
+        self.b_mat = np.zeros((self.DOF, self.DOF))
+        self.ff_tau_mat = np.zeros((self.DOF, 1))
 
-        self.q = np.mat(np.zeros((self.DOF, 1)))#real joint angle matrix
-        self.q_d = np.mat(np.zeros((self.DOF, 1)))#desired joint angle matrix
+        self.q = np.zeros((self.DOF, 1))
+        self.q_d = np.zeros((self.DOF, 1))
 
-        self.dq = np.mat(np.zeros((self.DOF, 1)))#real joint velocity matrix
-        self.dq_d = np.mat(np.zeros((self.DOF, 1)))#desired joint velocity matrix
+        self.dq = np.zeros((self.DOF, 1))
+        self.dq_d = np.zeros((self.DOF, 1))
+
         self.a = 0.2
         self.b = 5.0
         self.k = 0.05
