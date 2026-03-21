@@ -101,8 +101,9 @@ Key papers:
 
 ### Current priorities
 1. Integrate and test the adaptive impedance controller (`adaptive_imp.py`) from professor
-2. Tune `muscle_like_pd.py` gains with the adaptive impedance backend
-3. Validate full pipeline: CPG → trajectory → IK → PD → MuJoCo
+2. Experiment with Cycloidal Trajectories using the trajectory builder and making a new function like build_trajectory, but building cycloidal.
+3. Tune `muscle_like_pd.py` gains with the adaptive impedance backend
+4. Validate full pipeline: CPG → trajectory → IK → PD → MuJoCo
 
 ### Upcoming
 - Fuzzy logic layer for gait transition and terrain adaptation (papers to be added to `Docs/fuzzy_logic_related/`)

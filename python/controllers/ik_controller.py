@@ -12,6 +12,10 @@ from shared_module.global_constants import FOOT_TO_JOINT_DICT
 from cpg.trajectory_builder import TrajectoryBuilder, Coordinate
 from pd.muscle_like_pd import MuscleLikePD
 
+# Maximum joint velocity (rad/s) to prevent aggressive torques from large
+# Jacobian pseudoinverse outputs during fast CPG phase transitions.
+MAX_JOINT_VEL: float = 5.0
+
 # Home joint configuration used to compute rest foot positions
 # _HOME_Q = np.array([0.0, 0.9, -1.8])
 
@@ -56,8 +60,7 @@ class IKController:
 
         self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height)
 
-        self.pd = MuscleLikePD(robot_interface)
-        self.pd.set_freeze_adaptation(not use_adaptive_pd)
+        self.pd = MuscleLikePD(robot_interface, use_ioac=use_adaptive_pd)
         # ===== IK =====
         self.solvers = {}
         self.prev_q = {}
@@ -114,6 +117,15 @@ class IKController:
 
             dq = np.asarray(np.linalg.pinv(J) @ v).flatten()
 
+            # Clamp joint velocities to prevent aggressive torques during fast phase transitions
+            dq = np.clip(dq, -MAX_JOINT_VEL, MAX_JOINT_VEL)
+
+            # Abduction (HIP) is not controlled by our 2-DOF sagittal IK,
+            # so zero out its position and velocity targets to prevent drift.
+            hip_joint = joints[0]
+            joint_targets[hip_joint] = 0.0
+            dq[0] = 0.0
+
             for j, vel in zip(joints, dq):
                 joint_vel_targets[j] = float(vel)
         # ===== IK END =====
@@ -132,19 +144,6 @@ class IKController:
     def keyboard_callback(self, window, key, scancode, act, mods):
         if act != glfw.PRESS:
             return
-
-        # Toggle adaptive mode for A/B tests.
-        if key == glfw.KEY_F:
-            frozen = self.pd.toggle_freeze_adaptation()
-            mode = "FIXED_PD" if frozen else "ADAPTIVE"
-            print(f"[IKController] Control mode -> {mode}")
-
-        # Print saturation statistics.
-        if key == glfw.KEY_P:
-            stats = self.pd.get_saturation_stats()
-            print("[IKController] Saturation ratios per foot [hip, thigh, calf]:")
-            for foot, values in stats.items():
-                print(f"  {foot.name}: {np.array2string(values, precision=3)}")
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
         """Proxy to CPG for oscillator graph overlay in MujocoSim."""
