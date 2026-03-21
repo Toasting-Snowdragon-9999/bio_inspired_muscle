@@ -6,7 +6,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.global_constants import *
 from shared_module.robot_state import RobotInterface, Foot, Joint
-from pd.adaptive_impedance import ada_imp_ctrl
+from pd.adaptive_imp import ada_imp_ctrl
 
 
 """
@@ -36,13 +36,7 @@ class MuscleLikePD:
         self.impedance_controller = {
             foot: ada_imp_ctrl(
                 self.dof,
-                kp0=np.array([20.0, 28.0, 35.0]),
-                kd0=np.array([1.5, 2.2, 3.0]),
-                kp_bounds=(5.0, 120.0),
-                kd_bounds=(0.5, 25.0),
-                adapt_rate=0.02,
-                tau_limit=np.array([23.7, 23.7, 45.43]),
-                use_full_matrix=False,
+                use_ioac=False
             )
             for foot in Foot
         }
@@ -80,13 +74,13 @@ class MuscleLikePD:
             else:
                 # Paper-style adaptive feedback: tau_ff=0, tau=tau_fb.
                 K, B = self.impedance_controller[foot].update_impedance(
-                    q_vec, qd_vec, dq_vec, dqd_vec, freeze_adaptation=False
+                    q_vec, qd_vec, dq_vec, dqd_vec
                 )
                 tau = (K @ e) + (B @ de)
 
             tau = np.asarray(tau, dtype=float).reshape(-1)
 
-            limits = self.impedance_controller[foot].tau_limit
+            limits = 23.7
             tau = np.clip(tau, -limits, limits)
 
             sat_mask = np.isclose(np.abs(tau), limits, rtol=0.0, atol=1e-6)
