@@ -16,7 +16,7 @@ def test_cpg_output():
     output = {}
     for step in range(steps):
         cpg.run()
-        output[step] = cpg.get_phase_outputs()
+        output[step] = cpg.get_oscillator_outputs()
     time = np.arange(steps) * robot_interface.dt
     plt.figure(figsize=(10, 6))
     for i in range(cpg.neurons_cnt):
@@ -41,7 +41,8 @@ def test_trajectory_builder():
     for step in range(steps):
         cpg.run()
         output = cpg.get_phase_outputs()
-        foot_trajectories[step] = builder.build_trajectory(output)
+        vel = cpg.get_phase_velocities()
+        foot_trajectories[step], _ = builder.build_trajectory(output, vel)
 
     # Plot the foot trajectories
     plt.figure(figsize=(10, 6))
@@ -84,7 +85,8 @@ def test_3d():
     for _ in range(steps):
         cpg.run()
         phase = cpg.get_phase_outputs()
-        traj = builder.build_trajectory(phase)
+        vel = cpg.get_phase_velocities()
+        traj, _ = builder.build_trajectory(phase, vel)
         foot_trajectories.append(traj)
 
     fig = plt.figure(figsize=(10, 8))
@@ -134,7 +136,8 @@ def test_3d_direction():
     for _ in range(steps):
         cpg.run()
         phase = cpg.get_phase_outputs()
-        traj = builder.build_trajectory(phase)
+        vel = cpg.get_phase_velocities()
+        traj, _ = builder.build_trajectory(phase, vel)
         foot_trajectories.append(traj)
 
     fig = plt.figure(figsize=(10, 8))
@@ -258,7 +261,8 @@ def generate_foot_traj_for_IK():
     for _ in range(steps):
         cpg.run()
         phase = cpg.get_phase_outputs()
-        traj = builder.build_trajectory(phase)
+        vel = cpg.get_phase_velocities()
+        traj, _ = builder.build_trajectory(phase, vel)
         foot_trajectories.append(traj)
 
     pretty_print_foot_positions("Foot position 0", foot_trajectories[steps // 10])
@@ -286,6 +290,7 @@ def test_foot_positions():
         Foot.RL: Coordinate(-0.41655953150783753, 0.14199273012130323, 0.2828365249660655),
         Foot.RR: Coordinate(-0.4165598918564412, -0.14200727017798084, 0.2828368957807831)
     }
+
     foot_target = builder.transform_to_hip_coordinates(foot_targets)
     print(foot_target)
 

@@ -75,3 +75,6 @@ NEURON_POSITION = {
 
 
 LEG_LABELS = ['FL', 'FR', 'RR', 'RL']
+
+# Go2 actuator torque limit (Nm) — from MuJoCo model ctrlrange
+ACTUATOR_TORQUE_LIMIT = 23.7

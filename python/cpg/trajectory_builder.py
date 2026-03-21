@@ -18,6 +18,11 @@ class TrajectoryBuilder:
         self.width = width
         self.height = height
         self.stance_depth = 0.02
+        # Sharpness of the tanh sigmoid used to smoothly blend between swing and
+        # stance Z-amplitudes.  Higher values approach a hard switch; 10.0 gives
+        # a smooth but fairly quick transition that eliminates the velocity
+        # discontinuity at foot landing.
+        self.blend_sharpness = 10.0
         # Stance positions in the Hip frame
         self.stance_positions_hipf = {
             Foot.FL: Coordinate( 0.01359,  0.10217, -0.26305),
@@ -44,10 +49,11 @@ class TrajectoryBuilder:
             s = np.sin(theta)
             s_dot = np.cos(theta)
 
-            if s >= 0:
-                dz = self.height[foot] * s_dot * theta_dot
-            else:
-                dz = self.stance_depth * s_dot * theta_dot
+            # Smooth blend between swing (height) and stance (stance_depth) amplitudes
+            # to eliminate velocity discontinuity at foot landing (tanh sigmoid: 1 in swing, 0 in stance)
+            blend = 0.5 * (1.0 + np.tanh(self.blend_sharpness * s))
+            z_amp = blend * self.height[foot] + (1.0 - blend) * self.stance_depth
+            dz = z_amp * s_dot * theta_dot
 
             dy = 0.0
 
@@ -82,7 +88,7 @@ class TrajectoryBuilder:
         )
         return foot_positions_hip
 
-    def build_trajectory(self, neuron_output, neuron_phase_velocities) -> Coordinate:
+    def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Convert CPG neuron outputs (phases) to Cartesian foot positions in the hip-local frame.\n
            Make sure the foot_position in RobotInterface is initialized before calling this."""
         foot_positions = {}
@@ -94,10 +100,11 @@ class TrajectoryBuilder:
             x = - self.width * np.cos(theta)
 
             s = np.sin(theta)
-            if s >= 0:
-                z = self.height[foot] * s
-            else:
-                z = self.stance_depth * s
+            # Smooth blend between swing (height) and stance (stance_depth) amplitudes
+            # to eliminate velocity discontinuity at foot landing (tanh sigmoid: 1 in swing, 0 in stance)
+            blend = 0.5 * (1.0 + np.tanh(self.blend_sharpness * s))
+            z_amp = blend * self.height[foot] + (1.0 - blend) * self.stance_depth
+            z = z_amp * s
 
             # z = self.height[foot] * max(0.0, np.sin(theta))
             foot_positions[foot] = Coordinate(x, y, z)

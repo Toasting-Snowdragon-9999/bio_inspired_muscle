@@ -36,37 +36,33 @@ class ada_imp_ctrl( ):
             self.dq = np.asarray(dq).reshape(-1, 1)
             self.dq_d = np.asarray(dq_d).reshape(-1, 1)
 
-            pos_err = self.q - self.q_d
-            vel_err = self.dq - self.dq_d
-            track_err = self.k * vel_err + pos_err
-
-            norm_sq = la.norm(track_err)**2
-            ad = self.a / (1.0 + self.b * norm_sq)
-
-            ad = max(ad, 1e-6)  # prevent blow-up
-
-            self.k_mat = (track_err @ pos_err.T) / ad
-            self.b_mat = (track_err @ vel_err.T) / ad
+            self.k_mat = (self.gen_track_err @ self.gen_pos_err.T) / self.gen_ad_factor
+            self.b_mat = (self.gen_track_err @ self.gen_vel_err.T) / self.gen_ad_factor
         else: 
             # Normal non adaptive pd control, with fixed gains.
-            kp = 20.0
-            kd = 5.0
+            kp = 90.0
+            kd = 15.0
             self.k_mat = np.diag(np.full(self.DOF, kp))
             self.b_mat = np.diag(np.full(self.DOF, kd))
 
         return self.k_mat, self.b_mat
 
+    @property
     def gen_pos_err(self):#position error, see Eq. (1)
         return (self.q - self.q_d)
 
+    @property
     def gen_vel_err(self):#velocity error, see Eq. (1)
         return (self.dq - self.dq_d)
 
+    @property
     def gen_track_err(self):#tracking error, see Eq. (3)
-        return (self.k * self.gen_vel_err() + self.gen_pos_err())
+        return (self.k * self.gen_vel_err + self.gen_pos_err)
 
+    @property 
     def gen_ad_factor(self):#adaptation scalar, see Eq. (3)
-        return self.a/(1.0 + self.b * la.norm(self.gen_track_err()) * la.norm(self.gen_track_err()))
+        ad = self.a/(1.0 + self.b * la.norm(self.gen_track_err) * la.norm(self.gen_track_err))
+        return max(ad, 1e-6)  # clamp to prevent blow-up when dividing K and B
 
     """
     #Pseudocode

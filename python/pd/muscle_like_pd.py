@@ -1,17 +1,15 @@
 import os, sys
 import numpy as np
 
-
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared_module.global_constants import *
+from shared_module.global_constants import FOOT_TO_JOINT_DICT, ACTUATOR_TORQUE_LIMIT
 from shared_module.robot_state import RobotInterface, Foot, Joint
 from pd.adaptive_imp import ada_imp_ctrl
 
 
 """
-currently it is pr leg controller 
-could also crossccouple the legs for where 
+currently it is per leg controller 
+could also crosscouple the legs for where 
 an error in one joint can change the stiffness of another joint.
 
 class MuscleLikePDController: 
@@ -21,79 +19,79 @@ class MuscleLikePDController:
         self.impedance_controller = ada_imp_ctrl(self.dof)
 """
 
+DOF_PER_LEG = 3  # hip (abduction), thigh, calf
+
+
 class MuscleLikePD:
-    def __init__(
-        self,
-        robot_interface: RobotInterface,
-        kp_fixed: float = 90.0,
-        kd_fixed: float = 15.0,
-    ) -> None:
+    """Minimal interface between RobotInterface and the adaptive impedance controller.
+
+    For each leg, reads current joint state from robot_interface, feeds
+    position/velocity errors into ada_imp_ctrl to obtain stiffness (K) and
+    damping (B) matrices, then computes feedback torque:
+        tau = K @ (q_d - q) + B @ (dq_d - dq)
+
+    When use_ioac is False, ada_imp_ctrl returns fixed diagonal K/B matrices
+    (the non-adaptive fallback gains defined in adaptive_imp.py).
+    When use_ioac is True, K and B are adapted online per Xiong & Fang 2023.
+    Both paths go through ada_imp_ctrl — a fixed PD is just K=diag(kp), B=diag(kd).
+    """
+
+    def __init__(self, robot_interface: RobotInterface, use_ioac: bool = True) -> None:
         self.robot_interface = robot_interface
-        self.dof = 3  # 3 joints per leg * 4 legs
-        self.kp_fixed = float(kp_fixed)
-        self.kd_fixed = float(kd_fixed)
-        self.freeze_adaptation = False
-        self.impedance_controller = {
-            foot: ada_imp_ctrl(
-                self.dof,
-                use_ioac=False
-            )
+        # One impedance controller per leg (3 DOF each: hip, thigh, calf)
+        self.impedance_controller: dict[Foot, ada_imp_ctrl] = {
+            foot: ada_imp_ctrl(DOF_PER_LEG, use_ioac=use_ioac)
             for foot in Foot
         }
-        self._sat_events = {foot: np.zeros(self.dof, dtype=np.int64) for foot in Foot}
-        self._step_count = 0
 
-    def set_freeze_adaptation(self, enabled: bool) -> None:
-        self.freeze_adaptation = bool(enabled)
+    def control(
+        self,
+        q_d: dict[Joint, float],
+        dq_d: dict[Joint, float],
+    ) -> dict[Foot, np.ndarray]:
+        """Compute per-leg torques using the adaptive impedance controller.
 
-    def toggle_freeze_adaptation(self) -> bool:
-        self.freeze_adaptation = not self.freeze_adaptation
-        return self.freeze_adaptation
+        Parameters
+        ----------
+        q_d  : target joint positions  (from IK solver)
+        dq_d : target joint velocities (from Jacobian)
 
-    def control(self, q_d: dict[Joint, float], dq_d: dict[Joint, float]) -> dict[Foot, np.ndarray]:
-        q    = self.robot_interface.joint_positions
-        # q_d  = self.robot_interface.target_positions
-        dq   = self.robot_interface.joint_velocities
-        # dq_d = self.robot_interface.target_velocities
+        Returns
+        -------
+        dict mapping each Foot to a (3,) torque array [hip, thigh, calf].
+        """
+        # Current joint state from sensors (via robot_interface)
+        q = self.robot_interface.joint_positions
+        dq = self.robot_interface.joint_velocities
 
-        outputs = {}
+        outputs: dict[Foot, np.ndarray] = {}
 
         for foot, joints in FOOT_TO_JOINT_DICT.items():
+            # Build per-leg vectors (3,)
+            q_vec   = np.array([q[j]    for j in joints])
+            qd_vec  = np.array([q_d[j]  for j in joints])
+            dq_vec  = np.array([dq[j]   for j in joints])
+            dqd_vec = np.array([dq_d[j] for j in joints])
 
-            q_vec   = np.array([q[j]   for j in joints])
-            qd_vec  = np.array([q_d[j] for j in joints])
-            dq_vec  = np.array([dq[j]  for j in joints])
-            dqd_vec = np.array([dq_d[j]for j in joints])
-
-            e = qd_vec - q_vec
+            # Position and velocity errors
+            e  = qd_vec - q_vec
             de = dqd_vec - dq_vec
 
-            if self.freeze_adaptation:
-                # True ordinary fixed PD fallback.
-                tau = self.kp_fixed * e + self.kd_fixed * de
-            else:
-                # Paper-style adaptive feedback: tau_ff=0, tau=tau_fb.
-                K, B = self.impedance_controller[foot].update_impedance(
-                    q_vec, qd_vec, dq_vec, dqd_vec
-                )
-                tau = (K @ e) + (B @ de)
+            # Get stiffness (K) and damping (B) from impedance controller.
+            # When use_ioac=False this returns fixed diagonal matrices (standard PD).
+            # When use_ioac=True K and B are adapted online (Xiong & Fang 2023).
+            K, B = self.impedance_controller[foot].update_impedance(
+                q_vec, qd_vec, dq_vec, dqd_vec
+            )
 
+            # Feedback torque: tau = K @ e + B @ de
+            # @ is matrix multiplication, works with vectors as well
+            tau = (K @ e) + (B @ de)
             tau = np.asarray(tau, dtype=float).reshape(-1)
 
-            limits = 23.7
-            tau = np.clip(tau, -limits, limits)
+            # Clip to actuator torque limits
+            tau = np.clip(tau, -ACTUATOR_TORQUE_LIMIT, ACTUATOR_TORQUE_LIMIT)
 
-            sat_mask = np.isclose(np.abs(tau), limits, rtol=0.0, atol=1e-6)
-            self._sat_events[foot] += sat_mask.astype(np.int64)
             outputs[foot] = tau
 
-        self._step_count += 1
         return outputs
-
-    def get_saturation_stats(self) -> dict[Foot, np.ndarray]:
-        if self._step_count <= 0:
-            return {foot: np.zeros(self.dof) for foot in Foot}
-        return {
-            foot: self._sat_events[foot] / float(self._step_count)
-            for foot in Foot
-        }

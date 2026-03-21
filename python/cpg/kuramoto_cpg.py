@@ -110,7 +110,8 @@ class KuramotoCpg:
         k3 = self.derivatives(thetas + 0.5 * dt * k2)
         k4 = self.derivatives(thetas + dt * k3)
         thetas += (dt / 6) * (k1 + 2*k2 + 2*k3 + k4)
-        self.d_theta = k1
+        # Use the RK4-averaged derivative for consistency with the actual phase integration
+        self.d_theta = (k1 + 2*k2 + 2*k3 + k4) / 6.0
         for i, n in enumerate(self.neurons):
             n.phase = thetas[i]
 
