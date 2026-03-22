@@ -30,17 +30,18 @@ class MuscleLikePD:
     damping (B) matrices, then computes feedback torque:
         tau = K @ (q_d - q) + B @ (dq_d - dq)
 
-    When use_ioac is False, ada_imp_ctrl returns fixed diagonal K/B matrices
+    When use_oiac is False, ada_imp_ctrl returns fixed diagonal K/B matrices
     (the non-adaptive fallback gains defined in adaptive_imp.py).
-    When use_ioac is True, K and B are adapted online per Xiong & Fang 2023.
+    When use_oiac is True, K and B are adapted online per Xiong & Fang 2023.
     Both paths go through ada_imp_ctrl — a fixed PD is just K=diag(kp), B=diag(kd).
     """
 
-    def __init__(self, robot_interface: RobotInterface, use_ioac: bool = True) -> None:
+    def __init__(self, robot_interface: RobotInterface, params: tuple[float, float, float] = (0.2, 5.0, 0.05), use_oiac: bool = True) -> None:
+        """When Using the IKController, the default params cant be used"""
         self.robot_interface = robot_interface
         # One impedance controller per leg (3 DOF each: hip, thigh, calf)
         self.impedance_controller: dict[Foot, ada_imp_ctrl] = {
-            foot: ada_imp_ctrl(DOF_PER_LEG, use_ioac=use_ioac)
+            foot: ada_imp_ctrl(DOF_PER_LEG, params=params, use_oiac=use_oiac)
             for foot in Foot
         }
 

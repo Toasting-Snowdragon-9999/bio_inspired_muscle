@@ -51,6 +51,7 @@ class IKController:
         robot_interface: RobotInterface,
         stride_length: float = 0.06,
         step_height: float = 0.04,
+        params: tuple[float, float, float] = (0.2, 5.0, 0.05),
         use_adaptive_pd: bool = True
     ) -> None:
         self.robot_interface = robot_interface
@@ -60,7 +61,7 @@ class IKController:
 
         self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height)
 
-        self.pd = MuscleLikePD(robot_interface, use_ioac=use_adaptive_pd)
+        self.pd = MuscleLikePD(robot_interface, params=params, use_oiac=use_adaptive_pd)
         # ===== IK =====
         self.solvers = {}
         self.prev_q = {}

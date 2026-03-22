@@ -36,7 +36,6 @@ Only the files listed below are current. Files prefixed with `(old)` are legacy 
 |---|---|
 | `muscle_like_pd.py` | Muscle-like PD controller with per-leg adaptive impedance |
 | `adaptive_imp.py` | Online impedance adaptation (professor-provided, needs implementation & testing) |
-| `balancing_control.py` | Static balancing controller NOT CURRENTLY IN USE!|
 
 ### controllers/
 | File | Description |

@@ -498,6 +498,11 @@ class MujocoSim:
             if self.dispense_in_air:
                 self.enable_air_mode(self.height)
 
+        # Clear global MuJoCo callback before tearing down GLFW.
+        # If left set, the closure referencing this sim's objects will be
+        # invoked by MuJoCo during the next model load, causing a crash.
+        mj.set_mjcb_control(None)
+        glfw.destroy_window(window)
         glfw.terminate()
 
 
@@ -630,7 +635,13 @@ class MujocoSim:
         distance = current_x - self._start_x
 
         if distance <= 0:
+            # Robot did not move forward — CoT undefined (likely fell over)
             return None
+
+        g = 9.81
+        # CoT = E / (m * g * d)  — dimensionless cost of transport
+        cot = self._energy / (self._robot_mass * g * distance)
+        return cot
 
         g = 9.81
         cot = self._energy / (self._robot_mass * g * distance)
