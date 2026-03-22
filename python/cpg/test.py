@@ -2,6 +2,9 @@ import sys, os
 import numpy as np 
 import matplotlib.pyplot as plt
 from kuramoto_cpg import KuramotoCpg
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from shared_module.global_constants import NEURON_TO_FOOT_DICT
 from trajectory_builder import TrajectoryBuilder, Coordinate
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -11,7 +14,7 @@ def test_cpg_output():
     robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
-    second = 20.0 
+    second = 5.0 
     steps = int(second / robot_interface.dt)
     output = {}
     for step in range(steps):
@@ -20,7 +23,10 @@ def test_cpg_output():
     time = np.arange(steps) * robot_interface.dt
     plt.figure(figsize=(10, 6))
     for i in range(cpg.neurons_cnt):
-        plt.plot(time, [output[step][i] for step in range(steps)], label=f'Neuron {i+1}')
+        foot = NEURON_TO_FOOT_DICT[i]
+        # Neurons 3 and 4 (index 2, 3) are dashed so they remain visible when overlapping 1 and 2
+        linestyle = '--' if i >= 2 else '-'
+        plt.plot(time, [output[step][i] for step in range(steps)], label=f'{foot.name}', linestyle=linestyle)
     plt.title('Kuramoto CPG Neuron Outputs Over Time')
     plt.xlabel('Time (seconds)')
     plt.ylabel('Neuron Output')
@@ -33,7 +39,9 @@ def test_trajectory_builder():
 
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
-    builder = TrajectoryBuilder(robot_interface)
+    
+    step_height = {Foot.FL: 0.14, Foot.FR: 0.14, Foot.RL: 0.1, Foot.RR: 0.1}
+    builder = TrajectoryBuilder(robot_interface, width=0.1, height=step_height)
 
     second = 20.0 
     steps = int(second / robot_interface.dt)
@@ -44,12 +52,17 @@ def test_trajectory_builder():
         vel = cpg.get_phase_velocities()
         foot_trajectories[step], _ = builder.build_trajectory(output, vel)
 
-    # Plot the foot trajectories
+    # Plot the foot trajectories — only the last 2 gait cycles (2 s at 0.5 Hz)
+    # so the dashed pattern on RL/RR remains visible instead of being filled in
+    # by thousands of overlapping line segments.
+    cycles_to_show = int(2.0 / robot_interface.dt)  # 2 seconds of data
+    display_traj = dict(list(foot_trajectories.items())[-cycles_to_show:])
     plt.figure(figsize=(10, 6))
-    for foot in [Foot.FL, Foot.FR, Foot.RL, Foot.RR]:
-        x = [pos[foot].x for pos in foot_trajectories.values()]
-        z = [pos[foot].z for pos in foot_trajectories.values()]
-        plt.plot(x, z, label=f'{foot.name} Foot Trajectory')
+    for i, foot in enumerate([Foot.FL, Foot.FR, Foot.RL, Foot.RR]):
+        x = [pos[foot].x for pos in display_traj.values()]
+        z = [pos[foot].z for pos in display_traj.values()]
+        linestyle = '--' if i % 2 == 1 else '-'
+        plt.plot(x, z, label=f'{foot.name} Foot Trajectory', linestyle=linestyle)
     plt.title('Foot Trajectories from Trajectory Builder')
     plt.xlabel('X Position (m)')
     plt.ylabel('Z Position (m)')
@@ -294,6 +307,121 @@ def test_foot_positions():
     foot_target = builder.transform_to_hip_coordinates(foot_targets)
     print(foot_target)
 
+
+
+def test_bezier_trajectory():
+    """Visualise the bio-realistic Bézier foot trajectory.
+    
+    Three subplot rows:
+      1. X-Z trajectory loops (Bézier vs Egg, with velocity arrows)
+      2. Velocity components (dx, dz) over phase angle for FL foot
+      3. Front vs rear leg comparison (FL vs RL)
+    """
+    robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
+    robot_interface.dt = 0.001
+    cpg = KuramotoCpg(robot_interface)
+
+    step_height = {Foot.FL: 0.15, Foot.FR: 0.15, Foot.RL: 0.1, Foot.RR: 0.1}
+    builder = TrajectoryBuilder(robot_interface, width=0.1, height=step_height)
+
+    second = 20.0
+    steps = int(second / robot_interface.dt)
+
+    bezier_traj = {}
+    bezier_vel = {}
+    egg_traj = {}
+    for step in range(steps):
+        cpg.run()
+        phase = cpg.get_phase_outputs()
+        vel = cpg.get_phase_velocities()
+        bezier_traj[step], bezier_vel[step] = builder.build_bezier_trajectory(phase, vel)
+        egg_traj[step], _ = builder.build_egg_trajectory(phase, vel)
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+    # ── Top-left: Bézier X-Z trajectories with velocity arrows ──
+    ax = axes[0, 0]
+    for foot in [Foot.FL, Foot.FR, Foot.RL, Foot.RR]:
+        x = [pos[foot].x for pos in bezier_traj.values()]
+        z = [pos[foot].z for pos in bezier_traj.values()]
+        ax.plot(x, z, label=f'{foot.name}', linewidth=1.5)
+    # Add velocity arrows for FL at regular intervals
+    arrow_interval = steps // 20
+    for step in range(0, steps, arrow_interval):
+        p = bezier_traj[step][Foot.FL]
+        v = bezier_vel[step][Foot.FL]
+        speed = np.sqrt(v.x**2 + v.z**2)
+        if speed > 0.01:
+            scale = 0.02 / speed  # normalise arrow length
+            ax.annotate('', xy=(p.x + v.x*scale, p.z + v.z*scale), xytext=(p.x, p.z),
+                        arrowprops=dict(arrowstyle='->', color='red', lw=1.2))
+    ax.set_title('Bézier Foot Trajectories (arrows = FL velocity)')
+    ax.set_xlabel('X Position (m)')
+    ax.set_ylabel('Z Position (m)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+
+    # ── Top-right: Egg X-Z trajectories (comparison) ──
+    ax = axes[0, 1]
+    for foot in [Foot.FL, Foot.FR, Foot.RL, Foot.RR]:
+        x = [pos[foot].x for pos in egg_traj.values()]
+        z = [pos[foot].z for pos in egg_traj.values()]
+        ax.plot(x, z, label=f'{foot.name}', linewidth=1.5)
+    ax.set_title('Egg Foot Trajectories (comparison)')
+    ax.set_xlabel('X Position (m)')
+    ax.set_ylabel('Z Position (m)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+
+    # ── Bottom-left: Velocity components over phase (FL foot) ──
+    # Use a single clean sweep of θ from 0 to 2π
+    ax = axes[1, 0]
+    n_samples = 500
+    theta_range = np.linspace(0.01, 2*np.pi - 0.01, n_samples)
+    theta_dot = 2 * np.pi * 0.5  # 0.5 Hz
+    dx_vals = []
+    dz_vals = []
+    for theta in theta_range:
+        phases = np.array([theta, 0, 0, 0])
+        vels = np.array([theta_dot, 0, 0, 0])
+        _, foot_v = builder.build_bezier_trajectory(phases, vels)
+        dx_vals.append(foot_v[Foot.FL].x)
+        dz_vals.append(foot_v[Foot.FL].z)
+    theta_deg = np.rad2deg(theta_range)
+    ax.plot(theta_deg, dx_vals, label='dx (horizontal)', linewidth=1.5)
+    ax.plot(theta_deg, dz_vals, label='dz (vertical)', linewidth=1.5)
+    ax.axvline(180, color='gray', linestyle='--', alpha=0.5, label='swing↔stance')
+    ax.axhline(0, color='black', linewidth=0.5)
+    ax.fill_between(theta_deg, -0.5, 0.5, where=np.array(theta_deg) < 180,
+                    alpha=0.05, color='green', label='swing region')
+    ax.fill_between(theta_deg, -0.5, 0.5, where=np.array(theta_deg) >= 180,
+                    alpha=0.05, color='brown', label='stance region')
+    ax.set_title('FL Velocity Components vs Phase (with blending)')
+    ax.set_xlabel('Phase θ (degrees)')
+    ax.set_ylabel('Velocity (m/s)')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 360)
+
+    # ── Bottom-right: Front vs rear leg overlay ──
+    ax = axes[1, 1]
+    for foot, style in [(Foot.FL, '-'), (Foot.RL, '--')]:
+        x = [pos[foot].x for pos in bezier_traj.values()]
+        z = [pos[foot].z for pos in bezier_traj.values()]
+        ax.plot(x, z, style, label=f'{foot.name} ({"front" if foot in (Foot.FL,Foot.FR) else "rear"})',
+                linewidth=1.5)
+    ax.set_title('Front vs Rear Leg Bézier Comparison')
+    ax.set_xlabel('X Position (m)')
+    ax.set_ylabel('Z Position (m)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+
+    plt.tight_layout()
+    plt.show()
+
 def test_main():
     generate_foot_traj_for_IK()
     print("==================================================")
@@ -304,6 +432,11 @@ def test_main():
     print("==================================================")
     print("Testing Trajectory Builder output")
     test_trajectory_builder()
+    print("==================================================")
+
+    print("==================================================")
+    print("Testing Trajectory Builder output")
+    test_3d_direction()
     print("==================================================")
     return
 

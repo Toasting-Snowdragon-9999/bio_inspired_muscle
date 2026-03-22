@@ -6,10 +6,10 @@ Biomimetic Intelligence and Robotics, 3(2), [100100]. https://doi.org/10.1016/j.
 import numpy as np
 import numpy.linalg as la
 
-class ada_imp_ctrl( ):
+class ada_imp_ctrl():
     """Online impedance adaptation"""
-    def __init__(self, dof, use_ioac=True):
-
+    def __init__(self, dof, params: tuple[float, float, float] = (0.2, 5.0, 0.05),  use_oiac=True):
+        """When Using the MuscleLikePD controller, the default params cant be used"""
         self.DOF = dof
 
         # Use ndarray everywhere
@@ -23,14 +23,13 @@ class ada_imp_ctrl( ):
         self.dq = np.zeros((self.DOF, 1))
         self.dq_d = np.zeros((self.DOF, 1))
 
-        self.a = 0.2
-        self.b = 5.0
-        self.k = 0.05
-        self.use_ioac = use_ioac
+        self.a, self.b, self.k = params
+
+        self.use_oiac = use_oiac
 
 
     def update_impedance(self, q, q_d, dq, dq_d):
-        if self.use_ioac: 
+        if self.use_oiac: 
             self.q = np.asarray(q).reshape(-1, 1)
             self.q_d = np.asarray(q_d).reshape(-1, 1)
             self.dq = np.asarray(dq).reshape(-1, 1)
