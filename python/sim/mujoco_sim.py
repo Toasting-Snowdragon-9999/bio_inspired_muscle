@@ -78,8 +78,12 @@ class MujocoSim:
         glfw.swap_interval(1)
 
         self.cam = mj.MjvCamera()
+
         opt = mj.MjvOption()
         mj.mjv_defaultCamera(self.cam)
+        self.cam.azimuth=90
+        self.cam.elevation=0.5 
+        self.cam.distance=4
         mj.mjv_defaultOption(opt)
         
         self.scene = mj.MjvScene(self.model, maxgeom=10000)

@@ -143,7 +143,7 @@ class TrajectoryBuilder:
     
     def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Default trajectory method — delegates to the active trajectory builder."""
-        return self.build_bezier_trajectory(neuron_output, neuron_phase_velocities)
+        return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
     
     def build_bezier_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Bézier-curve closed-loop foot trajectory.

@@ -20,14 +20,65 @@
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 
-    <geom pos="1.2 0 0.04" type="box"  size="0.1 2 0.04" quat="1.0 0 0 0"/>
-    <geom pos="1.6 0 0.04" type="box"  size="0.1 2 0.04" quat="1.0 0 0 0"/>
+    <geom pos="1.2 0 0.00" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="1.4 0 0.02" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="1.6 0 0.04" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="1.8 0 0.06" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="2.0 0 0.06" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="2.2 0 0.04" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="2.4 0 0.02" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
+    <geom pos="2.6 0 0.00" type="box"  size="0.1 2 0.02" quat="1.0 0 0 0"/>
 
-    <geom pos="2.3 0 0.02" type="box"  size="0.2 2 0.15" quat="1.0 0 0 0"/>
-    <geom pos="2.6 0 0.02" type="box"  size="0.22 2 0.3" quat="1.0 0 0 0"/>
-    <geom pos="2.8 0 0.02" type="box"  size="0.23 2 0.45" quat="1.0 0 0 0"/>
-    <geom pos="3 0 0.02" type="box"  size="0.24 2 0.6" quat="1.0 0 0 0"/>
-    <geom pos="3.2 0 0.02" type="box"  size="0.25 2 0.75" quat="1.0 0 0 0"/>
-    <geom pos="3.4 0 0.02" type="box"  size="0.26 2 0.9" quat="1.0 0 0 0"/>
+    <!-- <geom pos="1.6 3.0 0.0"
+      type="box"
+      size="1.5 0.75 0.05"
+      quat="0.9987 0 -0.0499 0"
+      friction="1.5 0.1 0.1"/> -->
+
+    <!-- Ramp going UP -->
+    <geom pos="2.6 4.0 0.1"
+          type="box"
+          size="1.5 1.75 0.05"
+          quat="0.9987 0 -0.0499 0"
+          friction="1.5 0.1 0.1"/>
+
+    <!-- Ramp going DOWN -->
+    <geom pos="5.575 4.0 0.1"
+          type="box"
+          size="1.5 1.75 0.05"
+          quat="0.9987 0 0.0499 0"
+          friction="1.5 0.1 0.1"/>
+
+    <!-- ORIGINAL START (unchanged position) -->
+    <geom pos="1.2 -5 0.00" type="box" size="0.1 2 0.02"/>
+    <geom pos="1.4 -5 0.02" type="box" size="0.1 2 0.02"/>
+    <geom pos="1.6 -5 0.04" type="box" size="0.1 2 0.02"/>
+    <geom pos="1.8 -5 0.06" type="box" size="0.1 2 0.02"/>
+    <geom pos="2.0 -5 0.08" type="box" size="0.1 2 0.02"/>
+
+    <!-- CONTINUE UP (+5 steps) -->
+    <geom pos="2.2 -5 0.10" type="box" size="0.1 2 0.02"/>
+    <geom pos="2.4 -5 0.12" type="box" size="0.1 2 0.02"/>
+    <geom pos="2.6 -5 0.14" type="box" size="0.1 2 0.02"/>
+    <geom pos="2.8 -5 0.16" type="box" size="0.1 2 0.02"/>
+    <geom pos="3.0 -5 0.18" type="box" size="0.1 2 0.02"/>
+
+    <!-- PEAK -->
+    <geom pos="3.2 -5 0.18" type="box" size="0.1 2 0.02"/>
+
+    <!-- DOWN -->
+    <geom pos="3.4 -5 0.16" type="box" size="0.1 2 0.02"/>
+    <geom pos="3.6 -5 0.14" type="box" size="0.1 2 0.02"/>
+    <geom pos="3.8 -5 0.12" type="box" size="0.1 2 0.02"/>
+    <geom pos="4.0 -5 0.10" type="box" size="0.1 2 0.02"/>
+    <geom pos="4.2 -5 0.08" type="box" size="0.1 2 0.02"/>
+
+    <!-- EXTRA DOWN (+5 steps) -->
+    <geom pos="4.4 -5 0.06" type="box" size="0.1 2 0.02"/>
+    <geom pos="4.6 -5 0.04" type="box" size="0.1 2 0.02"/>
+    <geom pos="4.8 -5 0.02" type="box" size="0.1 2 0.02"/>
+    <geom pos="5.0 -5 0.00" type="box" size="0.1 2 0.02"/>
+    <geom pos="5.2 -5 0.00" type="box" size="0.1 2 0.02"/>
+
   </worldbody>
 </mujoco>
