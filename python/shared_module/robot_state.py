@@ -3,11 +3,22 @@ from enum import Enum, auto
 import numpy as np
 
 class Gait(Enum):
-    WALK   = (0.0, np.pi/2, np.pi, 3*np.pi/2)
+    # Define gait phases for each foot in the order: FL, FR, RL, RR
+
+    # Primary gaits
+    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi) 
+    # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
     TROT   = (0.0, np.pi,   0.0,   np.pi)
-    BOUND  = (0.0, 0.0,     np.pi, np.pi)
+    CANTER = (0.0, np.pi,   np.pi, 0.0)
+    # BOUND  = (0.0, 0.0,     np.pi, np.pi)
+    # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
+    GALLOP = (2*np.pi*0.7, np.pi,     0.0, 2*np.pi*0.2)
+
+
+    # Transitional     
     PACE   = (0.0, np.pi,   np.pi, 0.0)
-    GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
+    AMBLE = (0.0, np.pi/2, np.pi, np.pi/2) # TODO
+
     NONE   = (0.0, 0.0,     0.0,   0.0)
 
     def __str__(self):

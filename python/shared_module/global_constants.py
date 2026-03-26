@@ -61,13 +61,14 @@ OSCILLATOR_TO_THIGH = {
 }
 
 # TODO: Test and tune these values for energy efficiency
-ENERGY_EFFICIENT_FREQ = {
-    Gait.WALK: 0.5,
-    Gait.TROT: 0.7,
-    Gait.BOUND: 1.0,
-    Gait.PACE: 0.8,
-    Gait.GALLOP: 1.2,
-}
+# ENERGY_EFFICIENT_FREQ = {
+#     Gait.WALK: 0.5,
+#     Gait.TROT: 0.7,
+#     Gait.BOUND: 1.0,
+#     Gait.PACE: 0.8,
+#     Gait.GALLOP: 1.2,
+#     Gait.CANTER: 1.0,
+# }
 
 NEURON_POSITION = {
     0: ''
