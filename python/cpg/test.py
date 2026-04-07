@@ -5,10 +5,10 @@ from kuramoto_cpg import KuramotoCpg
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
-from trajectory_builder import TrajectoryBuilder, Coordinate
+from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot
+from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
 
 def test_cpg_output():
     robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
@@ -422,7 +422,91 @@ def test_bezier_trajectory():
     plt.tight_layout()
     plt.show()
 
+def test_oval_traj():
+    """Visualise the asymmetric oval foot trajectory for all four legs.
+    The two front legs share front-leg offset keys, rear legs share rear-leg keys,
+    so their oval shapes can be tuned independently."""
+
+    robot_interface = RobotInterface(
+        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5)
+    )
+    robot_interface.dt = 0.001
+
+    cpg = KuramotoCpg(robot_interface)
+
+    # Oval shape parameters — tweak these to see the effect on the trajectory.
+    # Front legs (FL & FR) share X_FFORE / X_FHIND / Z_FTOP / Z_FBOTTOM.
+    # Rear  legs (RL & RR) share X_RFORE / X_RHIND / Z_RTOP / Z_RBOTTOM.
+    # oval_offsets = {
+    #     OvalOffset.X_FFORE:   0.08,   # front: forward reach (m)
+    #     OvalOffset.X_FHIND:   0.06,   # front: rearward reach (m)
+    #     OvalOffset.Z_FTOP:    0.05,   # front: swing height (m)
+    #     OvalOffset.Z_FBOTTOM: 0.01,   # front: stance depth (m)
+    #     OvalOffset.X_RFORE:   0.07,   # rear:  forward reach (m)
+    #     OvalOffset.X_RHIND:   0.07,   # rear:  rearward reach (m)
+    #     OvalOffset.Z_RTOP:    0.04,   # rear:  swing height (m)
+    #     OvalOffset.Z_RBOTTOM: 0.01,   # rear:  stance depth (m)
+    # }
+    oval_offsets = {
+        OvalOffset.X_FFORE:   0.04,   # front: forward reach (m)
+        OvalOffset.X_FHIND:   0.04,   # front: rearward reach (m)
+        OvalOffset.Z_FTOP:    0.09,   # front: swing height (m)
+        OvalOffset.Z_FBOTTOM: 0.04,   # front: stance depth (m)
+        
+        OvalOffset.X_RFORE:   0.03,   # rear:  forward reach (m)
+        OvalOffset.X_RHIND:   0.03,   # rear:  rearward reach (m)
+        OvalOffset.Z_RTOP:    0.08,   # rear:  swing height (m)
+        OvalOffset.Z_RBOTTOM: 0.03,   # rear:  stance depth (m)
+    }
+
+    builder = TrajectoryBuilder(robot_interface, oval_offsets=oval_offsets)
+
+    # Simulate 5 seconds, collect trajectories
+    seconds = 5.0
+    steps = int(seconds / robot_interface.dt)
+    foot_trajectories = []
+    for _ in range(steps):
+        cpg.run()
+        phase = cpg.get_phase_outputs()
+        vel   = cpg.get_phase_velocities()
+        traj, _ = builder.build_oval_trajectory(phase, vel)
+        foot_trajectories.append(traj)
+
+    # Show only the last 2 gait cycles so the oval is clearly visible
+    cycles_to_show = int(2.0 / robot_interface.dt)
+    display_traj = foot_trajectories[-cycles_to_show:]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+    fig.suptitle('Oval Foot Trajectories (X–Z plane)')
+
+    # Front legs on left subplot, rear legs on right
+    groups = [
+        (axes[0], [Foot.FL, Foot.FR], 'Front Legs'),
+        (axes[1], [Foot.RL, Foot.RR], 'Rear Legs'),
+    ]
+    linestyles = ['-', '--']
+    for ax, feet, title in groups:
+        for foot, ls in zip(feet, linestyles):
+            x = [t[foot].x for t in display_traj]
+            z = [t[foot].z for t in display_traj]
+            ax.plot(x, z, linestyle=ls, label=foot.name)
+        ax.set_title(title)
+        ax.set_xlabel('X — forward / back (m)')
+        ax.set_ylabel('Z — height (m)')
+        ax.legend()
+        ax.grid(True)
+        ax.set_aspect('equal')
+
+    plt.tight_layout()
+    plt.show()
+
 def test_main():
+    print("==================================================")
+    print("Testing oval trajectory")
+    test_oval_traj()
+    print("==================================================")
+    return
+
     generate_foot_traj_for_IK()
     print("==================================================")
     print("Testing CPG output")
@@ -438,7 +522,6 @@ def test_main():
     print("Testing Trajectory Builder output")
     test_3d_direction()
     print("==================================================")
-    return
 
     print("==================================================")
     test_3d()
