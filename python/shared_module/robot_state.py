@@ -34,6 +34,13 @@ class Mode(Enum):
     def __str__(self):
         return self.name
 
+class TrajectoryMethod(Enum):
+    """Selects which foot trajectory shape the TrajectoryBuilder will produce.
+    Set via robot_interface.trajectory_method = TrajectoryMethod.X at any time."""
+    EGG    = auto()   # classic egg/ellipse — simple, no extra parameters needed
+    OVAL   = auto()   # asymmetric oval    — requires oval_offsets dict on TrajectoryBuilder
+    BEZIER = auto()   # Bézier swing+stance — requires bezier_control_points (or uses defaults)
+
 @dataclass
 class State:
     mode: Mode
@@ -106,7 +113,7 @@ class RobotInterface:
     TODO: Add safeguard to prevent invalid state transitions (e.g., WALK -> BOUND without TROT).
     """
 
-    def __init__(self, starting_state: State):
+    def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG):
         self.robot_state = RobotState(current_state=starting_state, previous_state=None, next_state=None)
         self._joint_positions: dict[Joint, float] = {}
         self._joint_velocities: dict[Joint, float] = {}
@@ -119,8 +126,17 @@ class RobotInterface:
         self._stance_positions: dict[Foot, list[float]] = {}
         self._hip_position: dict[Hip, list[float]] = {}
         self._thigh_position: dict[Thigh, list[float]] = {}
+        self._trajectory_method: TrajectoryMethod = trajectory_method  # default foot path shape
         self._initialized = True
         self._dt = None
+
+    @property
+    def trajectory_method(self) -> 'TrajectoryMethod':
+        return self._trajectory_method
+
+    @trajectory_method.setter
+    def trajectory_method(self, method: 'TrajectoryMethod'):
+        self._trajectory_method = method
 
     @property
     def dt(self):

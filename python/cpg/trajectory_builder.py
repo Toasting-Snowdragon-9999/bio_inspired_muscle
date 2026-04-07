@@ -1,10 +1,13 @@
+from enum import auto
 import os, sys
 from dataclasses import dataclass
+
+from numpy import angle
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import *
-from shared_module.robot_state import RobotInterface, Hip, Foot
+from shared_module.robot_state import RobotInterface, Hip, Foot, TrajectoryMethod
 
 @dataclass
 class Coordinate:
@@ -12,46 +15,49 @@ class Coordinate:
     y: float
     z: float
 
+class OvalOffset(Enum):
+    X_FFORE = auto()
+    X_RFORE = auto()
+    X_FHIND = auto()
+    X_RHIND = auto()
+
+    Z_FTOP = auto()
+    Z_FBOTTOM = auto()
+    Z_RTOP = auto()
+    Z_RBOTTOM = auto()
+
 class TrajectoryBuilder:
     def __init__(
         self,
         robot_interface: RobotInterface,
-        width: float = 0.1,
+        width:  dict[Foot, float] = {Foot.FL: 0.1, Foot.FR: 0.1, Foot.RL: 0.1, Foot.RR: 0.1},
         height: dict[Foot, float] = {Foot.FL: 0.05, Foot.FR: 0.05, Foot.RL: 0.05, Foot.RR: 0.05},
         bezier_control_points: dict[Foot, dict] | None = None,
         lift_off_bias: float = 0.3,
         touchdown_bias: float = 0.05,
         transition_blend_width: float = 0.05,
+        oval_offsets: dict[OvalOffset, float] | None = None
     ) -> None:
         self.robot_interface = robot_interface
-        self.width = width
-        self.height = height
+
+        # Normalise width/height: if None or a bare scalar is passed, expand to a
+        # per-foot dict so all internal code can always do self.width[foot] safely.
+        _default_width  = {Foot.FL: 0.1,  Foot.FR: 0.1,  Foot.RL: 0.1,  Foot.RR: 0.1}
+        _default_height = {Foot.FL: 0.05, Foot.FR: 0.05, Foot.RL: 0.05, Foot.RR: 0.05}
+        self.width  = width  if isinstance(width,  dict) else (_default_width  if width  is None else {f: float(width)  for f in Foot})
+        self.height = height if isinstance(height, dict) else (_default_height if height is None else {f: float(height) for f in Foot})
         self.stance_depth = 0.01
-        # Optional per-foot Bézier control point override.
-        # When None, control points are derived from width/height/stance_depth.
-        # Expected format: {Foot: {"swing": [P0,P1,P2,P3], "stance": [P0,P1,P2,P3]}}
-        # where each Pi is an (x, z) tuple or array.
+
         self.bezier_control_points = bezier_control_points
-        # ── Bio-realistic Bézier tuning parameters ──
-        # lift_off_bias: controls how far forward P1 shifts from P0 during lift-off.
-        #   Higher = more forward travel during initial rise (range: 0.3–1.0).
-        #   Expressed as fraction of width: P1.x = -w + lift_off_bias * w
         self.lift_off_bias = lift_off_bias
-        # touchdown_bias: controls how close to ground P2 is during swing descent.
-        #   Lower = shallower touchdown angle, less vertical velocity at impact.
-        #   Expressed as fraction of step height: P2.z = touchdown_bias * h
         self.touchdown_bias = touchdown_bias
-        # transition_blend_width: phase window (radians) for velocity blending at
-        #   swing↔stance transitions.  Smooths the unavoidable velocity reversal
-        #   over a short window to reduce torque spikes in the impedance controller.
-        #   Set to 0.0 to disable blending.  Default ≈ 3° (0.05 rad).
         self.transition_blend_width = transition_blend_width
-        # Sharpness of the tanh sigmoid used to smoothly blend between swing and
-        # stance Z-amplitudes.  Higher values approach a hard switch; 10.0 gives
-        # a smooth but fairly quick transition that eliminates the velocity
-        # discontinuity at foot landing.
         self.blend_sharpness = 10.0
-        # Stance positions in the Hip frame
+
+        self.oval_offsets = oval_offsets
+        # Trajectory method is driven by robot_interface.trajectory_method.
+        # Change it at any time: robot_interface.trajectory_method = TrajectoryMethod.OVAL
+
         self.stance_positions_hipf = {
             Foot.FL: Coordinate( 0.01359,  0.10217, -0.26305),
             Foot.FR: Coordinate( 0.01359, -0.10217, -0.26305),
@@ -72,7 +78,7 @@ class TrajectoryBuilder:
             theta = neuron_phases[neuron_idx]
             theta_dot = neuron_phase_velocities[neuron_idx]
 
-            dx = self.width * np.sin(theta) * theta_dot
+            dx = self.width[foot] * np.sin(theta) * theta_dot
 
             s = np.sin(theta)
             s_dot = np.cos(theta)
@@ -125,7 +131,7 @@ class TrajectoryBuilder:
             theta = neuron_output[neuron_idx]
 
             y = 0.0  # Keep the current y position unchanged
-            x = - self.width * np.cos(theta)
+            x = - self.width[foot] * np.cos(theta)
 
             s = np.sin(theta)
             # Smooth blend between swing (height) and stance (stance_depth) amplitudes
@@ -140,29 +146,133 @@ class TrajectoryBuilder:
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
         foot_velocities = self.compute_target_velocities(neuron_output, neuron_phase_velocities)
         return foot_positions, foot_velocities
+
+    def build_oval_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+        assert self.oval_offsets is not None, "oval_offsets must be set before calling build_oval_trajectory"
+
+        FRONT_FEET = {Foot.FL, Foot.FR}
+        foot_positions: dict[Foot, Coordinate] = {}
+        foot_velocities: dict[Foot, Coordinate] = {}
+
+        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+            theta     = neuron_output[neuron_idx]
+            theta_dot = neuron_phase_velocities[neuron_idx]
+
+            c = np.cos(theta)
+            s = np.sin(theta)
+
+            is_front = foot in FRONT_FEET
+            if is_front:
+                x_fore = self.oval_offsets[OvalOffset.X_FFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_FHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_FTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_FBOTTOM]
+            else:
+                x_fore = self.oval_offsets[OvalOffset.X_RFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_RHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_RTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_RBOTTOM]
+
+            # ── Smooth blends ─────────────────────────────────────────────
+            # Front/back transition (based on cos)
+            blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness * (-c)))
+            x_amp = blend_x * x_fore + (1.0 - blend_x) * x_hind
+
+            # Swing/stance transition (based on sin)
+            blend_z = 0.5 * (1.0 + np.tanh(self.blend_sharpness * s))
+            z_amp = blend_z * z_top + (1.0 - blend_z) * z_bot
+
+            # ── Position ─────────────────────────────────────────────────
+            x = -x_amp * c
+            z =  z_amp * s
+
+            foot_positions[foot] = Coordinate(x, 0.0, z)
+
+            # ── Derivatives (IMPORTANT: include dA/dθ) ────────────────────
+            # tanh'(x) = 1 - tanh²(x)
+            sech2_x = 1.0 - np.tanh(self.blend_sharpness * (-c))**2
+            sech2_z = 1.0 - np.tanh(self.blend_sharpness * s)**2
+
+            dblend_x_dtheta = 0.5 * self.blend_sharpness * sech2_x * (s)
+            dblend_z_dtheta = 0.5 * self.blend_sharpness * sech2_z * (c)
+
+            dx_amp_dtheta = dblend_x_dtheta * (x_fore - x_hind)
+            dz_amp_dtheta = dblend_z_dtheta * (z_top  - z_bot)
+
+            # Full derivatives
+            dx = (x_amp * s + dx_amp_dtheta * (-c)) * theta_dot
+            dz = (z_amp * c + dz_amp_dtheta * s) * theta_dot
+
+            foot_velocities[foot] = Coordinate(dx, 0.0, dz)
+
+        foot_positions = self.transform_relative_world_to_hip(foot_positions)
+        return foot_positions, foot_velocities
+
+    # def build_oval_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+    #     assert self.oval_offsets is not None, "oval_offsets must be set before calling build_oval_trajectory"
+
+    #     FRONT_FEET = {Foot.FL, Foot.FR}
+    #     foot_positions: dict[Foot, Coordinate] = {}
+    #     foot_velocities: dict[Foot, Coordinate] = {}
+
+    #     for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+    #         theta     = neuron_output[neuron_idx]
+    #         theta_dot = neuron_phase_velocities[neuron_idx]
+    #         c_angle   = np.cos(theta)
+    #         s_angle   = np.sin(theta)
+
+    #         is_front = foot in FRONT_FEET
+    #         if is_front:
+    #             x_fore_key = OvalOffset.X_FFORE   # forward reach,  front legs
+    #             x_hind_key = OvalOffset.X_FHIND   # rearward reach, front legs
+    #             z_top_key  = OvalOffset.Z_FTOP    # swing height,   front legs
+    #             z_bot_key  = OvalOffset.Z_FBOTTOM # stance depth,   front legs
+    #         else:
+    #             x_fore_key = OvalOffset.X_RFORE   # forward reach,  rear legs
+    #             x_hind_key = OvalOffset.X_RHIND   # rearward reach, rear legs
+    #             z_top_key  = OvalOffset.Z_RTOP    # swing height,   rear legs
+    #             z_bot_key  = OvalOffset.Z_RBOTTOM # stance depth,   rear legs
+
+    #         # ── Position ──────────────────────────────────────────────────────
+    #         # Convention matches the egg trajectory: x = -A * cos(θ)
+    #         #   θ=0   → cos=+1 → x = -A_hind  (foot at rear,  start of swing)
+    #         #   θ=π   → cos=-1 → x = +A_fore   (foot at front, end   of swing)
+    #         # Key selection: cos ≥ 0 → foot in rear half  → HIND amplitude
+    #         #                cos < 0 → foot in front half → FORE amplitude
+    #         if c_angle >= 0.0:
+    #             x_amp = self.oval_offsets[x_hind_key]  # rearward reach
+    #         else:
+    #             x_amp = self.oval_offsets[x_fore_key]  # forward reach
+    #         x = -x_amp * c_angle   # negated to match egg direction convention
+
+    #         if s_angle > 0.0:
+    #             z_amp = self.oval_offsets[z_top_key]
+    #         else:
+    #             z_amp = self.oval_offsets[z_bot_key]
+    #         z = z_amp * s_angle   # upward swing arc / downward stance compression
+
+    #         foot_positions[foot] = Coordinate(x, 0.0, z)
+    #         # ── Velocity: d/dt(-x_amp·cos θ) = +x_amp·sin(θ)·θ̇ ─────────────
+    #         dx =  x_amp * s_angle * theta_dot
+    #         dz =  z_amp * c_angle * theta_dot
+
+    #         foot_velocities[foot] = Coordinate(dx, 0.0, dz)
+
+    #     foot_positions = self.transform_relative_world_to_hip(foot_positions)
+    #     return foot_positions, foot_velocities
     
     def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-        """Default trajectory method — delegates to the active trajectory builder."""
-        return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
+        """Unified entry point — dispatches based on robot_interface.trajectory_method.
+        Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER"""
+        method = self.robot_interface.trajectory_method
+        if method is TrajectoryMethod.OVAL:
+            return self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
+        elif method is TrajectoryMethod.BEZIER:
+            return self.build_bezier_trajectory(neuron_output, neuron_phase_velocities)
+        else:  # TrajectoryMethod.EGG (default)
+            return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
     
     def build_bezier_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-        """Bézier-curve closed-loop foot trajectory.
-        
-        The gait cycle is split into two cubic Bézier segments:
-          - Swing  (θ mod 2π ∈ [0, π]):  foot lifts and moves forward
-          - Stance (θ mod 2π ∈ [π, 2π]): foot pushes backward on ground
-        
-        Control points default to a bio-realistic asymmetric D-shaped loop
-        (see _get_bezier_control_points for details).
-        
-        Velocities are computed analytically via:
-          dpos/dt = B'(t) · (1/π) · dθ/dt
-        
-        At swing↔stance transitions the foot reverses horizontal direction,
-        making true C1 continuity impossible.  Instead, a small blending
-        window (self.transition_blend_width) linearly interpolates between
-        the outgoing and incoming tangent vectors to reduce the velocity
-        discontinuity seen by the impedance controller."""
         foot_positions: dict[Foot, Coordinate] = {}
         foot_velocities: dict[Foot, Coordinate] = {}
 
@@ -230,55 +340,18 @@ class TrajectoryBuilder:
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
         return foot_positions, foot_velocities
 
-    def build_cycloidal_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-        pass
-
     # ── Bézier helpers ──────────────────────────────────────────
-
     @staticmethod
     def _cubic_bezier(t: float, P0: np.ndarray, P1: np.ndarray, P2: np.ndarray, P3: np.ndarray) -> np.ndarray:
-        """Evaluate a cubic Bézier curve at parameter t ∈ [0, 1].
-        B(t) = (1-t)³·P0 + 3(1-t)²t·P1 + 3(1-t)t²·P2 + t³·P3"""
         u = 1.0 - t
         return u*u*u * P0 + 3.0*u*u*t * P1 + 3.0*u*t*t * P2 + t*t*t * P3
 
     @staticmethod
     def _cubic_bezier_derivative(t: float, P0: np.ndarray, P1: np.ndarray, P2: np.ndarray, P3: np.ndarray) -> np.ndarray:
-        """Derivative of a cubic Bézier w.r.t. t (tangent vector).
-        B'(t) = 3(1-t)²·(P1-P0) + 6(1-t)t·(P2-P1) + 3t²·(P3-P2)"""
         u = 1.0 - t
         return 3.0*u*u * (P1 - P0) + 6.0*u*t * (P2 - P1) + 3.0*t*t * (P3 - P2)
 
     def _get_bezier_control_points(self, foot: Foot) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        """Return (swing_points, stance_points) for the given foot.
-
-        If self.bezier_control_points is set for this foot, use those directly.
-        Otherwise derive bio-realistic asymmetric control points from
-        width / height / stance_depth / lift_off_bias / touchdown_bias.
-
-        The default curve produces a D-shaped closed loop modelled after
-        measured trotting-dog foot trajectories:
-          - Sharp, steep lift-off at the rear of the stride
-          - Swing apex shifted rearward (forward-biased swing)
-          - Gradual, shallow touchdown at the front of the stride
-          - Flat stance with a slight compliance dip
-
-        Front legs use a wider lift-off arc and lower touchdown approach
-        (higher clearance, gentler landing).  Rear legs use a tighter,
-        more vertical lift-off (stronger push-off).
-
-        Control-point layout (swing, front legs):
-        ```
-             P1 ●              steep lift-off
-                 ╲
-                  ╲   apex region (rearward-biased)
-                   ╲
-                    ╲─────────● P2   gradual descent
-                               ╲
-        P0 ●                     ● P3   touchdown
-        (-w, 0)               (w, 0)
-        ```
-        """
         if self.bezier_control_points is not None and foot in self.bezier_control_points:
             cp = self.bezier_control_points[foot]
             swing  = [np.asarray(p, dtype=float) for p in cp["swing"]]
@@ -292,18 +365,6 @@ class TrajectoryBuilder:
         td = self.touchdown_bias   # how high P2 stays above ground (fraction of h)
 
         is_front = foot in (Foot.FL, Foot.FR)
-
-        # ── Swing: rear (-w) → front (+w), airborne ──
-        #
-        # P0: lift-off at the rear of the stride, ground level.
-        # P1: steep rise — mostly vertical with some forward component.
-        #     Front legs: P1.x = -w + 0.8w = -0.2w  (wide forward arc)
-        #     Rear legs:  P1.x = -w + 0.6w = -0.4w  (tighter, more vertical push)
-        #     P1.z = h  (full step height for both)
-        # P2: pre-touchdown approach — well forward and close to ground.
-        #     Front legs: P2.x = 0.6w, P2.z = 0.15h  (very shallow approach)
-        #     Rear legs:  P2.x = 0.5w, P2.z = 0.20h  (slightly steeper)
-        # P3: touchdown at the front of the stride, ground level.
         if is_front:
             p1_x_frac = lo        # 0.8 → P1 at -0.2w (wide forward arc)
             p2_x_frac = 0.2       # P2 well forward
@@ -319,18 +380,6 @@ class TrajectoryBuilder:
             np.array([ p2_x_frac * w,  p2_z_frac * h]),# P2: gradual descent
             np.array([ w,                     0.0]),   # P3: front, ground
         ]
-
-        # ── Stance: front (+w) → rear (-w), on ground ──
-        #
-        # P0: just after touchdown, ground level.
-        # P1: quick settle into the ground — compliance dip.
-        #     P1.x = 0.4w (still forward), P1.z = -d (at ground depth)
-        # P2: continued backward travel at ground depth.
-        #     P2.x = -0.4w (rearward), P2.z = -d
-        # P3: end of stance at rear, back to ground level for lift-off.
-        #
-        # The long flat region between P1 and P2 at depth -d mimics the
-        # foot being planted while the body passes over it.
         stance = [
             np.array([ w,        0.0]),   # P0: front, ground
             np.array([ w * 0.6, -d  ]),   # P1: settle into ground depth
