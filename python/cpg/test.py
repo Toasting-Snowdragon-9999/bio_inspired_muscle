@@ -14,6 +14,8 @@ def test_cpg_output():
     robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
+    traj = TrajectoryBuilder(robot_interface)
+
     second = 5.0 
     steps = int(second / robot_interface.dt)
     output = {}
@@ -30,6 +32,54 @@ def test_cpg_output():
     plt.title('Kuramoto CPG Neuron Outputs Over Time')
     plt.xlabel('Time (seconds)')
     plt.ylabel('Neuron Output')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+def test_duty_factor():
+    robot_interface = RobotInterface(
+        starting_state=State(
+            gait=Gait.TROT,
+            mode=Mode.MOVING,
+            frequency=0.5
+        )
+    )
+    robot_interface.dt = 0.001
+
+    cpg = KuramotoCpg(robot_interface)
+    traj = TrajectoryBuilder(robot_interface)
+
+    second = 5.0
+    steps = int(second / robot_interface.dt)
+
+    output = {}
+
+    for step in range(steps):
+        cpg.run()
+
+        # 🔧 FIX: apply duty factor element-wise
+        phases = cpg.get_phase_outputs()   # <-- IMPORTANT: use phases, not outputs
+        warped = [traj.apply_duty_factor(p) for p in phases]
+
+        output[step] = warped
+
+    time = np.arange(steps) * robot_interface.dt
+
+    plt.figure(figsize=(10, 6))
+    for i in range(cpg.neurons_cnt):
+        foot = NEURON_TO_FOOT_DICT[i]
+        linestyle = '--' if i >= 2 else '-'
+
+        plt.plot(
+            time,
+            [output[step][i] for step in range(steps)],
+            label=f'{foot.name}',
+            linestyle=linestyle
+        )
+
+    plt.title('Duty Factor Warped Phases')
+    plt.xlabel('Time (seconds)')
+    plt.ylabel('Warped Phase (rad)')
     plt.legend()
     plt.grid()
     plt.show()
@@ -459,7 +509,7 @@ def test_oval_traj():
         OvalOffset.Z_RBOTTOM: 0.03,   # rear:  stance depth (m)
     }
 
-    builder = TrajectoryBuilder(robot_interface, oval_offsets=oval_offsets)
+    builder = TrajectoryBuilder(robot_interface, oval_offsets=oval_offsets, duty_factor=0.8)
 
     # Simulate 5 seconds, collect trajectories
     seconds = 5.0

@@ -113,7 +113,7 @@ class RobotInterface:
     TODO: Add safeguard to prevent invalid state transitions (e.g., WALK -> BOUND without TROT).
     """
 
-    def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG):
+    def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG, duty_factor: float = 0.5):
         self.robot_state = RobotState(current_state=starting_state, previous_state=None, next_state=None)
         self._joint_positions: dict[Joint, float] = {}
         self._joint_velocities: dict[Joint, float] = {}
@@ -127,6 +127,7 @@ class RobotInterface:
         self._hip_position: dict[Hip, list[float]] = {}
         self._thigh_position: dict[Thigh, list[float]] = {}
         self._trajectory_method: TrajectoryMethod = trajectory_method  # default foot path shape
+        self._duty_factor: float = duty_factor  # fraction of the cycle spent in stance (0–1)
         self._initialized = True
         self._dt = None
 
@@ -137,6 +138,16 @@ class RobotInterface:
     @trajectory_method.setter
     def trajectory_method(self, method: 'TrajectoryMethod'):
         self._trajectory_method = method
+
+    @property
+    def duty_factor(self) -> float:
+        """Fraction of the gait cycle spent in stance (e.g. 0.5 = 50% stance).
+        Change at any time: robot_interface.duty_factor = 0.6"""
+        return self._duty_factor
+
+    @duty_factor.setter
+    def duty_factor(self, value: float):
+        self._duty_factor = float(value)
 
     @property
     def dt(self):
