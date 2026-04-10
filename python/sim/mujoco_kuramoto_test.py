@@ -80,6 +80,8 @@ def egg_traj_test():
     print("Cost of Transport:", cot)
 
 def main():
+    egg_traj_test()
+    return
     oval_traj_test()
 
 if __name__ == "__main__":
