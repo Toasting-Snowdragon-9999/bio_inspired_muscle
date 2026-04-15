@@ -16,7 +16,7 @@ from shared_module.global_constants import (
 from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh
 
 class MujocoSim:
-    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 30.0):
+    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 60.0):
         self.model = mj.MjModel.from_xml_path(model_path)
         self.data = mj.MjData(self.model)
         self.robot_interface = robot_interface
