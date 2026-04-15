@@ -176,6 +176,17 @@ class TrajectoryBuilder:
             theta     = neuron_output[neuron_idx]
             theta = self.apply_duty_factor(theta)  # <-- IMPORTANT: apply duty factor to phase before computing trajectory
             theta_dot = neuron_phase_velocities[neuron_idx]
+            # if foot in {Foot.RL, Foot.RR}:
+            #     theta += np.pi
+            self.blend_sharpness = 7.0
+
+            # --- phase warping (THIS fixes your problem) ---
+            p = 1.8
+
+            phi = (theta % (2*np.pi)) / (2*np.pi)   # normalize phase [0,1]
+            phi_warped = phi ** p                   # warp phase
+
+            theta_warped = phi_warped * 2*np.pi     # back to radians
 
             c = np.cos(theta)
             s = np.sin(theta)
@@ -194,7 +205,8 @@ class TrajectoryBuilder:
 
             # ── Smooth blends ─────────────────────────────────────────────
             # Front/back transition (based on cos)
-            blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness * (-c)))
+            # blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness-6.9 * (-c)))
+            blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness-5 * (phi - 0.5)))
             x_amp = blend_x * x_fore + (1.0 - blend_x) * x_hind
 
             # Swing/stance transition (based on sin)
@@ -202,7 +214,16 @@ class TrajectoryBuilder:
             z_amp = blend_z * z_top + (1.0 - blend_z) * z_bot
 
             # ── Position ─────────────────────────────────────────────────
-            x = -x_amp * c
+            # x = -x_amp * c
+            direction = 1.0 if foot in FRONT_FEET else -1.0
+            x = -direction * x_amp * c
+
+            # normal ellipse AFTER warping
+            # x = -x_amp * c
+
+            c = np.cos(theta_warped)
+            s = np.sin(theta_warped)
+
             z =  z_amp * s
 
             foot_positions[foot] = Coordinate(x, 0.0, z)
@@ -220,7 +241,16 @@ class TrajectoryBuilder:
 
             # Full derivatives
             dx = (x_amp * s + dx_amp_dtheta * (-c)) * theta_dot
-            dz = (z_amp * c + dz_amp_dtheta * s) * theta_dot
+            # dz = (z_amp * c + dz_amp_dtheta * s) * theta_dot
+            dphi_dtheta = 1 / (2*np.pi)
+            dphi_warped_dtheta = p * (phi ** (p - 1)) * dphi_dtheta
+
+            dtheta_warped_dtheta = 2*np.pi * dphi_warped_dtheta
+
+            dz = (
+                z_amp * np.cos(theta_warped) * dtheta_warped_dtheta +
+                dz_amp_dtheta * s
+            ) * theta_dot
 
             foot_velocities[foot] = Coordinate(dx, 0.0, dz)
 
