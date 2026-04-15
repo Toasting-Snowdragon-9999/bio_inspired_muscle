@@ -26,6 +26,43 @@ class OvalOffset(Enum):
     Z_RTOP = auto()
     Z_RBOTTOM = auto()
 
+@dataclass
+class EllipsoidConfig:
+    """Ellipsoid trajectory shape with independent parameters for front and rear legs.
+
+    The foot traces a smooth, asymmetric ellipse whose x- and z-amplitudes
+    blend continuously via tanh between forward/rearward and top/bottom values.
+    Rotation and skew are applied afterwards as a post-process.
+
+    Front legs (FL, FR) use the `front_*` fields.
+    Rear  legs (RL, RR) use the `rear_*`  fields.
+
+    Attributes:
+        front_x_fore   / rear_x_fore   : forward reach from stance (m).
+        front_x_hind   / rear_x_hind   : rearward reach from stance (m).
+        front_z_top    / rear_z_top    : swing height above stance (m).
+        front_z_bottom / rear_z_bottom : stance depth below stance (m) — compliance.
+        front_rotation / rear_rotation : ellipse rotation about its centre (radians).
+                                         Positive tilts the swing arc forward.
+        front_skew     / rear_skew     : constant x-displacement (m) applied after rotation.
+                                         Shifts the entire ellipse forward (positive)
+                                         or backward (negative) along the x axis.
+    """
+    # ── Front legs (FL, FR) ───────────────────────────────────────────────────
+    front_x_fore:   float = 0.08
+    front_x_hind:   float = 0.08
+    front_z_top:    float = 0.06
+    front_z_bottom: float = 0.01
+    front_rotation: float = 0.0
+    front_skew:     float = 0.0
+    # ── Rear legs (RL, RR) ────────────────────────────────────────────────────
+    rear_x_fore:   float = 0.08
+    rear_x_hind:   float = 0.08
+    rear_z_top:    float = 0.06
+    rear_z_bottom: float = 0.01
+    rear_rotation: float = 0.0
+    rear_skew:     float = 0.0
+
 class TrajectoryBuilder:
     def __init__(
         self,
@@ -33,7 +70,8 @@ class TrajectoryBuilder:
         width:  dict[Foot, float] = {Foot.FL: 0.1, Foot.FR: 0.1, Foot.RL: 0.1, Foot.RR: 0.1},
         height: dict[Foot, float] = {Foot.FL: 0.05, Foot.FR: 0.05, Foot.RL: 0.05, Foot.RR: 0.05},
         duty_factor: float = 0.5,
-        oval_offsets: dict[OvalOffset, float] | None = None
+        oval_offsets: dict[OvalOffset, float] | None = None,
+        ellipsoid_config: 'EllipsoidConfig | None' = None
     ) -> None:
         """
         Duty factor is the fraction of stance phase, 0.8 means 80% stance, 20% swing.
@@ -57,6 +95,10 @@ class TrajectoryBuilder:
         self.blend_sharpness = 10.0
 
         self.oval_offsets = oval_offsets
+        # EllipsoidConfig for the ELLIPSOID trajectory method.
+        # Front (FL, FR) and rear (RL, RR) legs each have independent parameters
+        # via the front_* / rear_* fields of EllipsoidConfig.
+        self.ellipsoid_config = ellipsoid_config
         # Trajectory method is driven by robot_interface.trajectory_method.
         # Change it at any time: robot_interface.trajectory_method = TrajectoryMethod.OVAL
 
@@ -216,7 +258,7 @@ class TrajectoryBuilder:
             # ── Position ─────────────────────────────────────────────────
             # x = -x_amp * c
             direction = 1.0 if foot in FRONT_FEET else -1.0
-            x = -direction * x_amp * c
+            x = - direction * x_amp * c
 
             # normal ellipse AFTER warping
             # x = -x_amp * c
@@ -257,12 +299,130 @@ class TrajectoryBuilder:
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
         return foot_positions, foot_velocities
     
+    
+    def build_ellipsoid_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+        """
+        Asymmetric ellipsoid foot trajectory with independent front/rear parameters,
+        rotation, skew, and duty-factor support.
+
+        Pipeline per foot:
+          1. Select front_* or rear_* fields from EllipsoidConfig based on leg group.
+          2. Apply duty-factor warp to θ  →  θ_w  (stretches stance, compresses swing)
+          3. Blend x-amplitude between x_fore / x_hind via tanh on cos(θ_w)
+          4. Blend z-amplitude between z_top  / z_bottom via tanh on sin(θ_w)
+          5. Build base ellipse:  x_e = -x_amp·cos(θ_w),  z_e = z_amp·sin(θ_w)
+          6. Rotate by `rotation` radians about the ellipse centre
+          7. Skew along x:  x_s = x_r + skew  (constant x-displacement, m)
+          8. Velocities are derived fully analytically (chain rule through all steps)
+
+        Use cfg.front_* fields for FL/FR and cfg.rear_* fields for RL/RR.
+        """
+        assert self.ellipsoid_config is not None, (
+            "ellipsoid_config must be set on TrajectoryBuilder before using ELLIPSOID method."
+        )
+
+        FRONT_FEET = {Foot.FL, Foot.FR}
+        cfg: EllipsoidConfig = self.ellipsoid_config
+        blend = self.blend_sharpness   # tanh sharpness (shared with egg/oval)
+        foot_positions:  dict[Foot, Coordinate] = {}
+        foot_velocities: dict[Foot, Coordinate] = {}
+
+        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+            theta     = neuron_output[neuron_idx]
+            theta_dot = neuron_phase_velocities[neuron_idx]
+
+            # Select front or rear parameters based on leg group
+            is_front = foot in FRONT_FEET
+            x_fore   = cfg.front_x_fore   if is_front else cfg.rear_x_fore
+            x_hind   = cfg.front_x_hind   if is_front else cfg.rear_x_hind
+            z_top    = cfg.front_z_top    if is_front else cfg.rear_z_top
+            z_bottom = cfg.front_z_bottom if is_front else cfg.rear_z_bottom
+            rotation = cfg.front_rotation if is_front else cfg.rear_rotation
+            skew     = cfg.front_skew     if is_front else cfg.rear_skew
+
+            # ── 1. Duty-factor warp ───────────────────────────────────────
+            # The warp derivative d(θ_w)/d(θ) scales the velocity output so
+            # the foot moves at the correct Cartesian speed during stance/swing.
+            duty    = self.robot_interface.duty_factor
+            phi     = (theta % (2 * np.pi)) / (2 * np.pi)
+            theta_w = self.apply_duty_factor(theta)
+            # Piecewise-linear warp derivative
+            d_tw_dtheta = (0.5 / duty) if phi < duty else (0.5 / (1.0 - duty))
+
+            c = np.cos(theta_w)
+            s = np.sin(theta_w)
+
+            # ── 2 & 3. Blended amplitudes ────────────────────────────────
+            # x: fore when cos < 0 (foot moving forward), hind when cos > 0
+            blend_x = 0.5 * (1.0 + np.tanh(blend * (-c)))
+            x_amp   = blend_x * x_fore + (1.0 - blend_x) * x_hind
+
+            # z: top when sin > 0 (swing), bottom when sin < 0 (stance)
+            blend_z = 0.5 * (1.0 + np.tanh(blend * s))
+            z_amp   = blend_z * z_top + (1.0 - blend_z) * z_bottom
+
+            # ── 4. Base ellipse position ──────────────────────────────────
+            x_e = -x_amp * c
+            z_e =  z_amp * s
+
+            # ── 5. Rotation ───────────────────────────────────────────────
+            ca, sa = np.cos(rotation), np.sin(rotation)
+            x_r =  x_e * ca - z_e * sa
+            z_r =  x_e * sa + z_e * ca
+
+            # ── 6. Skew (constant x-displacement, m) ──────────────────────
+            # Shifts the whole ellipse forward/backward; z is unchanged.
+            x_s = x_r + skew
+            z_s = z_r
+
+            foot_positions[foot] = Coordinate(x_s, 0.0, z_s)
+
+            # ── 7. Analytic velocities (chain rule) ───────────────────────
+            # All partial derivatives are with respect to θ_w, then scaled
+            # by d(θ_w)/d(θ) · dθ/dt.
+            sech2_x = 1.0 - np.tanh(blend * (-c)) ** 2
+            sech2_z = 1.0 - np.tanh(blend * s)    ** 2
+
+            # d(blend_x)/d(θ_w) = 0.5 · blend · sech²(-c) · sin
+            dblend_x = 0.5 * blend * sech2_x * s
+            # d(blend_z)/d(θ_w) = 0.5 · blend · sech²(s) · cos
+            dblend_z = 0.5 * blend * sech2_z * c
+
+            dx_amp = dblend_x * (x_fore - x_hind)   # d(x_amp)/d(θ_w)
+            dz_amp = dblend_z * (z_top  - z_bottom) # d(z_amp)/d(θ_w)
+
+            # d(x_e)/d(θ_w) = x_amp·sin + dx_amp·(-cos)
+            dx_e = x_amp * s  + dx_amp * (-c)
+            # d(z_e)/d(θ_w) = z_amp·cos + dz_amp·sin
+            dz_e = z_amp * c  + dz_amp * s
+
+            # Rotate derivatives
+            dx_r = dx_e * ca - dz_e * sa
+            dz_r = dx_e * sa + dz_e * ca
+
+            # Skew is a constant offset — no contribution to velocity
+            dx_s = dx_r
+            dz_s = dz_r
+
+            # Final velocity: d(pos)/d(θ_w) · d(θ_w)/d(θ) · dθ/dt
+            vx = dx_s * d_tw_dtheta * theta_dot
+            vz = dz_s * d_tw_dtheta * theta_dot
+
+            foot_velocities[foot] = Coordinate(vx, 0.0, vz)
+
+        foot_positions = self.transform_relative_world_to_hip(foot_positions)
+        return foot_positions, foot_velocities
+
+
     def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Unified entry point — dispatches based on robot_interface.trajectory_method.
         Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER"""
         method = self.robot_interface.trajectory_method
         if method is TrajectoryMethod.OVAL:
             return self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
+
+        if method is TrajectoryMethod.ELLIPSOID:
+            return self.build_ellipsoid_trajectory(neuron_output, neuron_phase_velocities)
 
         else:  # TrajectoryMethod.EGG (default)
             return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)

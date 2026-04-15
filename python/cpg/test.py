@@ -5,7 +5,7 @@ from kuramoto_cpg import KuramotoCpg
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
-from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset
+from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, EllipsoidConfig
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
@@ -57,7 +57,6 @@ def test_duty_factor():
     for step in range(steps):
         cpg.run()
 
-        # 🔧 FIX: apply duty factor element-wise
         phases = cpg.get_phase_outputs()   # <-- IMPORTANT: use phases, not outputs
         warped = [traj.apply_duty_factor(p) for p in phases]
 
@@ -498,15 +497,17 @@ def test_oval_traj():
     #     OvalOffset.Z_RBOTTOM: 0.01,   # rear:  stance depth (m)
     # }
     oval_offsets = {
-        OvalOffset.X_FFORE:   0.04,   # front: forward reach (m)
-        OvalOffset.X_FHIND:   0.04,   # front: rearward reach (m)
-        OvalOffset.Z_FTOP:    0.09,   # front: swing height (m)
-        OvalOffset.Z_FBOTTOM: 0.04,   # front: stance depth (m)
-        
-        OvalOffset.X_RFORE:   0.03,   # rear:  forward reach (m)
-        OvalOffset.X_RHIND:   0.03,   # rear:  rearward reach (m)
-        OvalOffset.Z_RTOP:    0.08,   # rear:  swing height (m)
-        OvalOffset.Z_RBOTTOM: 0.03,   # rear:  stance depth (m)
+        # FRONT
+        OvalOffset.X_FFORE:   0.05,
+        OvalOffset.X_FHIND:   0.05,
+        OvalOffset.Z_FTOP:    0.05,
+        OvalOffset.Z_FBOTTOM: 0.05,   # IMPORTANT (stance_depth!)
+
+        # REAR
+        OvalOffset.X_RFORE:   0.05,
+        OvalOffset.X_RHIND:   0.05,
+        OvalOffset.Z_RTOP:    0.05,
+        OvalOffset.Z_RBOTTOM: 0.05,
     }
 
     builder = TrajectoryBuilder(robot_interface, oval_offsets=oval_offsets, duty_factor=0.8)
@@ -550,7 +551,99 @@ def test_oval_traj():
     plt.tight_layout()
     plt.show()
 
+def test_ellipsoid_traj():
+    """Visualise the asymmetric ellipsoid foot trajectory for all four legs.
+    The left subplot shows front legs, the right shows rear legs.
+    Tweak EllipsoidConfig parameters to explore the trajectory shape.
+    Supports asymmetric fore/hind reach, top/bottom height, rotation, skew,
+    and duty factor just like the oval trajectory."""
+
+    robot_interface = RobotInterface(
+        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5),
+        trajectory_method=TrajectoryMethod.ELLIPSOID
+    )
+    robot_interface.dt = 0.001
+
+    cpg = KuramotoCpg(robot_interface)
+
+    # EllipsoidConfig now has independent front_* / rear_* parameters.
+    # Front legs (FL, FR) and rear legs (RL, RR) can have different shapes.
+    cfg = EllipsoidConfig(
+        front_x_fore   = 0.1,  # forward reach — front legs (m)
+        front_x_hind   = 0.08,  # rearward reach — front legs (m)
+        front_z_top    = 0.05,   # swing height — front legs (m)
+        front_z_bottom = 0.02,   # stance depth — front legs (m)
+        front_rotation = 0.20,   # ~11° forward tilt — front legs
+        front_skew     = 0.00,   # x-displacement (m) — shift ellipse fwd/back, front legs
+
+        rear_x_fore    = 0.1,  # forward reach — rear legs (m)
+        rear_x_hind    = 0.05,  # rearward reach — rear legs (m)
+        rear_z_top     = 0.07,   # swing height — rear legs (m)
+        rear_z_bottom  = 0.02,   # stance depth — rear legs (m)
+        rear_rotation  = -0.20,   # ~11° forward tilt — rear legs
+        rear_skew      = -0.02,   # x-displacement (m) — shift ellipse fwd/back, rear legs
+    )
+    # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
+    builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.6)
+
+    # Simulate 5 s, collect trajectories
+    seconds = 5.0
+    steps   = int(seconds / robot_interface.dt)
+    foot_trajectories = []
+    for _ in range(steps):
+        cpg.run()
+        phase = cpg.get_phase_outputs()
+        vel   = cpg.get_phase_velocities()
+        traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
+        foot_trajectories.append(traj)
+
+    # Show only the last 2 gait cycles for a clean shape
+    cycles_to_show = int(2.0 / robot_interface.dt)
+    display_traj = foot_trajectories[-cycles_to_show:]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=True)
+    fig.suptitle(
+        f'Ellipsoid Foot Trajectories (X–Z)  '
+        f'[front: x_fore={cfg.front_x_fore}, x_hind={cfg.front_x_hind}, '
+        f'z_top={cfg.front_z_top}, z_bot={cfg.front_z_bottom}, '
+        f'rot={cfg.front_rotation:.2f}rad | '
+        f'rear: x_fore={cfg.rear_x_fore}, z_top={cfg.rear_z_top}, '
+        f'rot={cfg.rear_rotation:.2f}rad | duty={robot_interface.duty_factor}]'
+    )
+
+    groups = [
+        (axes[0], [Foot.FL, Foot.FR], 'Front Legs'),
+        (axes[1], [Foot.RL, Foot.RR], 'Rear Legs'),
+    ]
+    linestyles = ['-', '--']
+    for ax, feet, title in groups:
+        for foot, ls in zip(feet, linestyles):
+            x = [t[foot].x for t in display_traj]
+            z = [t[foot].z for t in display_traj]
+            ax.plot(x, z, linestyle=ls, label=foot.name)
+            # Blue dot at the stationary (stance) position — zero offset maps to
+            # builder.stance_positions[foot] after transform_relative_world_to_hip
+            sx = builder.stance_positions[foot].x
+            sz = builder.stance_positions[foot].z
+            ax.plot(sx, sz, 'o', color='blue', markersize=7, zorder=5,
+                    label='stance' if foot == feet[0] else None)
+        ax.set_title(title)
+        ax.set_xlabel('X — forward / back (m)')
+        ax.set_ylabel('Z — height (m)')
+        ax.legend()
+        ax.grid(True)
+        ax.set_aspect('equal')
+
+    plt.tight_layout()
+    plt.show()
+
 def test_main():
+    print("==================================================")
+    print("Testing ellipsoid trajectory")
+    test_ellipsoid_traj()
+    print("==================================================")
+    return
+
     print("==================================================")
     print("Testing oval trajectory")
     test_oval_traj()

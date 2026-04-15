@@ -2,7 +2,7 @@ import os
 import sys
 
 from mujoco_sim import MujocoSim
-from cpg.trajectory_builder import OvalOffset
+from cpg.trajectory_builder import EllipsoidConfig, OvalOffset
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from controllers.ik_controller import IKController
@@ -11,12 +11,46 @@ from shared_module.robot_state import Foot, RobotInterface, State, Mode, Gait, T
 # TROT: freq = 2.2 Hz 
 # BOUND: freq = 5.0 Hz
 
+def elip_traj_test():
+    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.TROT, frequency=1.95), trajectory_method=TrajectoryMethod.ELLIPSOID)
+
+    xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
+    sim = MujocoSim(xml_path, robot_interface=robot_interface, window_scale=2.0)
+    # sim.enable_air_mode(0.5)
+    cfg = EllipsoidConfig(
+        front_x_fore   = 0.1,  # forward reach — front legs (m)
+        front_x_hind   = 0.08,  # rearward reach — front legs (m)
+        front_z_top    = 0.05,   # swing height — front legs (m)
+        front_z_bottom = 0.02,   # stance depth — front legs (m)
+        front_rotation = 0.20,   # ~11° forward tilt — front legs
+        front_skew     = 0.00,   # x-displacement (m) — shift ellipse fwd/back, front legs
+
+        rear_x_fore    = 0.1,  # forward reach — rear legs (m)
+        rear_x_hind    = 0.08,  # rearward reach — rear legs (m)
+        rear_z_top     = 0.07,   # swing height — rear legs (m)
+        rear_z_bottom  = 0.0,   # stance depth — rear legs (m)
+        rear_rotation  = -0.20,   # ~11° forward tilt — rear legs
+        rear_skew      = -0.0,   # x-displacement (m) — shift ellipse fwd/back, rear legs
+    )
+
+    params = (
+        0.2,  # a: learning rate of impedance adaptation
+        5.0,  # b: sensitivity of impedance adaptation to velocity error
+        0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
+    )
+
+    controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, ellipsoid_config=cfg)
+    sim.sim(controller=controller, sim_length=-1, slow_factor=4.0)
+    
+    cot = sim.compute_CoT()
+    print("Cost of Transport:", cot)
+
 def oval_traj_test():
     robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.TROT, frequency=1.8), trajectory_method=TrajectoryMethod.OVAL)
 
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene_stairs.xml')
     sim = MujocoSim(xml_path, robot_interface=robot_interface, window_scale=2.0)
-    
+    sim.enable_air_mode(0.5)
     oval_offsets = {
         # FRONT
         OvalOffset.X_FFORE:   0.08,
@@ -38,7 +72,7 @@ def oval_traj_test():
     )
 
     controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, oval_offset=oval_offsets)
-    sim.sim(controller=controller, sim_length=-1, slow_factor=1.0)
+    sim.sim(controller=controller, sim_length=-1, slow_factor=4.0)
     
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
@@ -80,7 +114,7 @@ def egg_traj_test():
     print("Cost of Transport:", cot)
 
 def main():
-    oval_traj_test()
+    elip_traj_test()
     return
     
 
