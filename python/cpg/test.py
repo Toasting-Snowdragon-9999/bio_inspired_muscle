@@ -569,20 +569,20 @@ def test_ellipsoid_traj():
     # EllipsoidConfig now has independent front_* / rear_* parameters.
     # Front legs (FL, FR) and rear legs (RL, RR) can have different shapes.
     cfg = EllipsoidConfig(
-        front_x_fore   = 0.1,  # forward reach — front legs (m)
-        front_x_hind   = 0.08,  # rearward reach — front legs (m)
-        front_z_top    = 0.05,   # swing height — front legs (m)
-        front_z_bottom = 0.02,   # stance depth — front legs (m)
-        front_rotation = 0.20,   # ~11° forward tilt — front legs
-        front_skew     = 0.00,   # x-displacement (m) — shift ellipse fwd/back, front legs
+            front_x_fore   = 0.14,  
+            front_x_hind   = 0.08,
+            front_z_top    = 0.10,
+            front_z_bottom = 0.02,
+            front_rotation = 0.05,
+            front_skew     = 0.05,
 
-        rear_x_fore    = 0.1,  # forward reach — rear legs (m)
-        rear_x_hind    = 0.05,  # rearward reach — rear legs (m)
-        rear_z_top     = 0.07,   # swing height — rear legs (m)
-        rear_z_bottom  = 0.02,   # stance depth — rear legs (m)
-        rear_rotation  = -0.20,   # ~11° forward tilt — rear legs
-        rear_skew      = -0.02,   # x-displacement (m) — shift ellipse fwd/back, rear legs
-    )
+            rear_x_fore    = 0.06,
+            rear_x_hind    = 0.14,
+            rear_z_top     = 0.08,
+            rear_z_bottom  = 0.02,
+            rear_rotation  = -0.05,
+            rear_skew      = -0.00,
+        )
     # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
     builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.6)
 
