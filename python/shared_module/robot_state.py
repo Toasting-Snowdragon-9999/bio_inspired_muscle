@@ -6,7 +6,7 @@ class Gait(Enum):
     # Define gait phases for each foot in the order: FL, FR, RL, RR
 
     # Primary gaits
-    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi) 
+    WALK   = (np.pi/2, 3*np.pi/2, 0.0, np.pi) 
     # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
     TROT   = (0.0, np.pi,   0.0,   np.pi)
     CANTER = (0.0, np.pi,   np.pi, 0.0)
@@ -40,6 +40,7 @@ class TrajectoryMethod(Enum):
     EGG    = auto()   # classic egg/ellipse — simple, no extra parameters needed
     OVAL   = auto()   # asymmetric oval    — requires oval_offsets dict on TrajectoryBuilder
     BEZIER = auto()   # Bézier swing+stance — requires bezier_control_points (or uses defaults)
+    ELLIPSOID = auto()
 
 @dataclass
 class State:

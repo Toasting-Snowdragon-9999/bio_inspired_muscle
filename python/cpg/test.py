@@ -478,7 +478,8 @@ def test_oval_traj():
     so their oval shapes can be tuned independently."""
 
     robot_interface = RobotInterface(
-        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5)
+        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5),
+        trajectory_method=TrajectoryMethod.ELLIPSOID
     )
     robot_interface.dt = 0.001
 
@@ -497,16 +498,29 @@ def test_oval_traj():
     #     OvalOffset.Z_RTOP:    0.04,   # rear:  swing height (m)
     #     OvalOffset.Z_RBOTTOM: 0.01,   # rear:  stance depth (m)
     # }
-    oval_offsets = {
-        OvalOffset.X_FFORE:   0.04,   # front: forward reach (m)
-        OvalOffset.X_FHIND:   0.04,   # front: rearward reach (m)
-        OvalOffset.Z_FTOP:    0.09,   # front: swing height (m)
-        OvalOffset.Z_FBOTTOM: 0.04,   # front: stance depth (m)
+    # oval_offsets = {
+    #     OvalOffset.X_FFORE:   0.15,   # front: forward reach (m)
+    #     OvalOffset.X_FHIND:   0.05,   # front: rearward reach (m)
+    #     OvalOffset.Z_FTOP:    0.02,   # front: swing height (m)
+    #     OvalOffset.Z_FBOTTOM: 0.01,   # front: stance depth (m)
         
-        OvalOffset.X_RFORE:   0.03,   # rear:  forward reach (m)
-        OvalOffset.X_RHIND:   0.03,   # rear:  rearward reach (m)
-        OvalOffset.Z_RTOP:    0.08,   # rear:  swing height (m)
-        OvalOffset.Z_RBOTTOM: 0.03,   # rear:  stance depth (m)
+    #     OvalOffset.X_RFORE:   0.15,   # rear:  forward reach (m)
+    #     OvalOffset.X_RHIND:   0.05,   # rear:  rearward reach (m)
+    #     OvalOffset.Z_RTOP:    0.11,   # rear:  swing height (m)
+    #     OvalOffset.Z_RBOTTOM: 0.01,   # rear:  stance depth (m)
+    # }
+    oval_offsets = { # TROT
+        # FRONT
+        OvalOffset.X_FFORE:   0.10,
+        OvalOffset.X_FHIND:   0.10,
+        OvalOffset.Z_FTOP:    0.08,
+        OvalOffset.Z_FBOTTOM: 0.00,   # IMPORTANT (stance_depth!)
+
+        # REAR
+        OvalOffset.X_RFORE:   0.10,
+        OvalOffset.X_RHIND:   0.10,
+        OvalOffset.Z_RTOP:    0.07,
+        OvalOffset.Z_RBOTTOM: -0.01,
     }
 
     builder = TrajectoryBuilder(robot_interface, oval_offsets=oval_offsets, duty_factor=0.8)
@@ -519,7 +533,7 @@ def test_oval_traj():
         cpg.run()
         phase = cpg.get_phase_outputs()
         vel   = cpg.get_phase_velocities()
-        traj, _ = builder.build_oval_trajectory(phase, vel)
+        traj, _ = builder.build_trajectory(phase, vel)
         foot_trajectories.append(traj)
 
     # Show only the last 2 gait cycles so the oval is clearly visible

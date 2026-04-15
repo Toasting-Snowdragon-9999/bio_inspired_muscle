@@ -12,24 +12,51 @@ from shared_module.robot_state import Foot, RobotInterface, State, Mode, Gait, T
 # BOUND: freq = 5.0 Hz
 
 def oval_traj_test():
-    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.TROT, frequency=1.8), trajectory_method=TrajectoryMethod.OVAL)
+    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.WALK, frequency=1.8), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=0.50)
 
-    xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene_stairs.xml')
+    xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     sim = MujocoSim(xml_path, robot_interface=robot_interface, window_scale=2.0)
-    
-    oval_offsets = {
+    sim.enable_air_mode(0.5)
+    # oval_offsets = { # GALLOP
+    #     # FRONT
+    #     OvalOffset.X_FFORE:   0.12,
+    #     OvalOffset.X_FHIND:   0.14,
+    #     OvalOffset.Z_FTOP:    0.13,
+    #     OvalOffset.Z_FBOTTOM: 0.01,   # IMPORTANT (stance_depth!)
+
+    #     # REAR
+    #     OvalOffset.X_RFORE:   0.08,
+    #     OvalOffset.X_RHIND:   0.12,
+    #     OvalOffset.Z_RTOP:    0.11,
+    #     OvalOffset.Z_RBOTTOM: 0.01,
+    # }
+    oval_offsets = { # TROT
         # FRONT
-        OvalOffset.X_FFORE:   0.08,
-        OvalOffset.X_FHIND:   0.08,
-        OvalOffset.Z_FTOP:    0.13,
-        OvalOffset.Z_FBOTTOM: 0.01,   # IMPORTANT (stance_depth!)
+        OvalOffset.X_FFORE:   0.10,
+        OvalOffset.X_FHIND:   0.10,
+        OvalOffset.Z_FTOP:    0.05,
+        OvalOffset.Z_FBOTTOM: 0.00,   # IMPORTANT (stance_depth!)
 
         # REAR
-        OvalOffset.X_RFORE:   0.06,
-        OvalOffset.X_RHIND:   0.06,
-        OvalOffset.Z_RTOP:    0.11,
-        OvalOffset.Z_RBOTTOM: 0.01,
+        OvalOffset.X_RFORE:   0.10,
+        OvalOffset.X_RHIND:   0.10,
+        OvalOffset.Z_RTOP:    0.07,
+        OvalOffset.Z_RBOTTOM: -0.02,
     }
+    print(oval_offsets)
+    # oval_offsets = { # WALK
+    #     # FRONT
+    #     OvalOffset.X_FFORE:   0.12,
+    #     OvalOffset.X_FHIND:   0.10,
+    #     OvalOffset.Z_FTOP:    0.08,
+    #     OvalOffset.Z_FBOTTOM: 0.01,   # IMPORTANT (stance_depth!)
+
+    #     # REAR
+    #     OvalOffset.X_RFORE:   0.08,
+    #     OvalOffset.X_RHIND:   0.10,
+    #     OvalOffset.Z_RTOP:    0.06,
+    #     OvalOffset.Z_RBOTTOM: 0.01,
+    # }
 
     params = (
         0.2,  # a: learning rate of impedance adaptation
@@ -38,7 +65,7 @@ def oval_traj_test():
     )
 
     controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, oval_offset=oval_offsets)
-    sim.sim(controller=controller, sim_length=-1, slow_factor=1.0)
+    sim.sim(controller=controller, sim_length=5, slow_factor=5.0)
     
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
@@ -74,12 +101,13 @@ def egg_traj_test():
     )
 
     controller = IKController(robot_interface=robot_interface, stride_length=step_width, step_height=step_height, params=params, use_adaptive_pd=True)
-    sim.sim(controller=controller, sim_length=-1, slow_factor=1.0)
+    sim.sim(controller=controller, sim_length=3, slow_factor=1.0)
 
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
 
 def main():
+    # egg_traj_test()
     oval_traj_test()
     return
     

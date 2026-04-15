@@ -257,12 +257,194 @@ class TrajectoryBuilder:
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
         return foot_positions, foot_velocities
     
+    def build_ellipsoid_trajectory(
+    self,
+    neuron_output,
+    neuron_phase_velocities
+) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+
+        assert self.oval_offsets is not None
+
+        FRONT_FEET = {Foot.FL, Foot.FR}
+        foot_positions = {}
+        foot_velocities = {}
+
+        duty = self.robot_interface.duty_factor
+
+        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+
+            # --- Phase ---
+            theta = neuron_output[neuron_idx]
+            theta = self.apply_duty_factor(theta)
+            theta_dot = neuron_phase_velocities[neuron_idx]
+
+            # Phase shift handles rear/front difference
+            if foot in {Foot.RL, Foot.RR}:
+                theta += np.pi
+
+            phi = (theta % (2 * np.pi)) / (2 * np.pi)
+
+            # --- Offsets ---
+            if foot in FRONT_FEET:
+                x_fore = self.oval_offsets[OvalOffset.X_FFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_FHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_FTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_FBOTTOM]
+            else:
+                x_fore = self.oval_offsets[OvalOffset.X_RFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_RHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_RTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_RBOTTOM]
+
+            center_x = (x_fore - x_hind) / 2.0
+            radius_x = (x_fore + x_hind) / 2.0
+
+            center_z = z_bot + z_top / 2.0
+            radius_z = z_top / 2.0
+
+            # --- Angle ---
+            if phi < duty:
+                u = phi / duty
+                angle = np.pi + np.pi * u
+                du_dtheta = 1.0 / (duty * 2 * np.pi)
+            else:
+                u = (phi - duty) / (1 - duty)
+                angle = np.pi * u
+                du_dtheta = 1.0 / ((1 - duty) * 2 * np.pi)
+
+            dangle_dtheta = np.pi * du_dtheta
+
+            c = np.cos(angle)
+            s = np.sin(angle)
+
+            # =========================================================
+            # ✅ FIX 1: coordinate frame (rear legs flipped)
+            # =========================================================
+            if foot in FRONT_FEET:
+                x = center_x + radius_x * c
+                dx = +radius_x * s * dangle_dtheta * theta_dot
+            else:
+                x = center_x - radius_x * c
+                dx = +radius_x * s * dangle_dtheta * theta_dot
+
+            # --- Base ellipse ---
+            z_base = center_z + radius_z * s
+
+            # =========================================================
+            # ✅ FIX 2: ONE consistent bias (NO mirroring)
+            # =========================================================
+            forward_bias = 0.5 * (1 + c)
+
+            k = 0.5 * z_top
+
+            z = z_base + k * (forward_bias - 0.5)
+
+            # --- Derivatives ---
+            dz_base = radius_z * c * dangle_dtheta
+            dbias_dtheta = -0.5 * s * dangle_dtheta
+
+            dz = (dz_base + k * dbias_dtheta) * theta_dot
+
+            foot_positions[foot] = Coordinate(x, 0.0, z)
+            foot_velocities[foot] = Coordinate(dx, 0.0, dz)
+
+        foot_positions = self.transform_relative_world_to_hip(foot_positions)
+
+        return foot_positions, foot_velocities
+    
+    def build_half_ellipsoid_trajectory(
+    self,
+    neuron_output,
+    neuron_phase_velocities
+) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+
+        assert self.oval_offsets is not None, "oval_offsets must be set before calling"
+
+        FRONT_FEET = {Foot.FL, Foot.FR}
+        foot_positions: dict[Foot, Coordinate] = {}
+        foot_velocities: dict[Foot, Coordinate] = {}
+
+        duty = self.robot_interface.duty_factor
+
+        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
+
+            # --- Phase ---
+            theta = neuron_output[neuron_idx]
+            theta = self.apply_duty_factor(theta)
+            theta_dot = neuron_phase_velocities[neuron_idx]
+
+            # Phase shift for rear legs (gait timing)
+            if foot in {Foot.RL, Foot.RR}:
+                theta += np.pi
+
+            phi = (theta % (2 * np.pi)) / (2 * np.pi)
+
+            # --- Select offsets ---
+            if foot in FRONT_FEET:
+                x_fore = self.oval_offsets[OvalOffset.X_FFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_FHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_FTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_FBOTTOM]
+            else:
+                x_fore = self.oval_offsets[OvalOffset.X_RFORE]
+                x_hind = self.oval_offsets[OvalOffset.X_RHIND]
+                z_top  = self.oval_offsets[OvalOffset.Z_RTOP]
+                z_bot  = self.oval_offsets[OvalOffset.Z_RBOTTOM]
+
+            # Geometry
+            center_x = (x_fore - x_hind) / 2.0
+            radius_x = (x_fore + x_hind) / 2.0
+
+            # --- STANCE ---
+            if phi < duty:
+                u = phi / duty  # 0 → 1
+
+                # Linear backward motion
+                x = x_fore - (x_fore + x_hind) * u
+                z = z_bot
+
+                # Derivatives
+                dphi_dtheta = 1.0 / (2 * np.pi)
+                du_dtheta = (1.0 / duty) * dphi_dtheta
+
+                dx = -(x_fore + x_hind) * du_dtheta * theta_dot
+                dz = 0.0
+
+            # --- SWING ---
+            else:
+                u = (phi - duty) / (1 - duty)  # 0 → 1
+                angle = np.pi * u  # 0 → π
+
+                c = np.cos(angle)
+                s = np.sin(angle)
+
+                x = center_x + radius_x * c
+                z = z_bot + z_top * s
+
+                # Derivatives
+                dphi_dtheta = 1.0 / (2 * np.pi)
+                du_dtheta = (1.0 / (1 - duty)) * dphi_dtheta
+                dangle_dtheta = np.pi * du_dtheta
+
+                dx = -radius_x * s * dangle_dtheta * theta_dot
+                dz =  z_top * c * dangle_dtheta * theta_dot
+
+            foot_positions[foot] = Coordinate(x, 0.0, z)
+            foot_velocities[foot] = Coordinate(dx, 0.0, dz)
+
+        foot_positions = self.transform_relative_world_to_hip(foot_positions)
+
+        return foot_positions, foot_velocities
+
     def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Unified entry point — dispatches based on robot_interface.trajectory_method.
         Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER"""
         method = self.robot_interface.trajectory_method
         if method is TrajectoryMethod.OVAL:
             return self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
+        
+        elif method is TrajectoryMethod.ELLIPSOID:
+            return self.build_ellipsoid_trajectory(neuron_output, neuron_phase_velocities)
 
         else:  # TrajectoryMethod.EGG (default)
             return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
