@@ -37,9 +37,10 @@ class Mode(Enum):
 class TrajectoryMethod(Enum):
     """Selects which foot trajectory shape the TrajectoryBuilder will produce.
     Set via robot_interface.trajectory_method = TrajectoryMethod.X at any time."""
-    EGG    = auto()   # classic egg/ellipse — simple, no extra parameters needed
-    OVAL   = auto()   # asymmetric oval    — requires oval_offsets dict on TrajectoryBuilder
-    BEZIER = auto()   # Bézier swing+stance — requires bezier_control_points (or uses defaults)
+    EGG       = auto()   # classic egg/ellipse — simple, no extra parameters needed
+    OVAL      = auto()   # asymmetric oval    — requires oval_offsets dict on TrajectoryBuilder
+    BEZIER    = auto()   # Bézier swing+stance — requires bezier_control_points (or uses defaults)
+    ELLIPSOID = auto()   # rotatable ellipse with per-foot x-displacement — requires ellipsoid_config on TrajectoryBuilder
 
 @dataclass
 class State:

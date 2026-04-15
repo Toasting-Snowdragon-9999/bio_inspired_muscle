@@ -9,7 +9,7 @@ from cpg.kuramoto_cpg import KuramotoCpg
 from inverse_kinematics.inverse_kin import *
 from shared_module.robot_state import Joint, RobotInterface, Foot
 from shared_module.global_constants import FOOT_TO_JOINT_DICT
-from cpg.trajectory_builder import OvalOffset, TrajectoryBuilder, Coordinate
+from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, Coordinate
 from pd.muscle_like_pd import MuscleLikePD
 
 # Maximum joint velocity (rad/s) to prevent aggressive torques from large
@@ -53,14 +53,15 @@ class IKController:
         step_height: dict[Foot, float] = None,
         params: tuple[float, float, float] = (0.2, 5.0, 0.05),
         use_adaptive_pd: bool = True,
-        oval_offset: dict[OvalOffset, float] = None
+        oval_offset: dict[OvalOffset, float] = None,
+        ellipsoid_config: EllipsoidConfig = None
     ) -> None:
         self.robot_interface = robot_interface
 
         # CPG owns the foot trajectory generation
         self.cpg = KuramotoCpg(robot_interface)
 
-        self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height, oval_offsets=oval_offset)
+        self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height, oval_offsets=oval_offset, ellipsoid_config=ellipsoid_config)
 
         self.pd = MuscleLikePD(robot_interface, params=params, use_oiac=use_adaptive_pd)
         # ===== IK =====
