@@ -528,6 +528,72 @@ class MujocoSim:
         glfw.destroy_window(window)
         glfw.terminate()
 
+    def headless_sim(self, controller=None, sim_length: float = 10.0, warmup: float = 2.0) -> float | None:
+        """
+        Run the simulation as fast as possible with no visual output.
+        Intended for parameter sweeps and CoT benchmarking.
+
+        Args:
+            controller:  Object with a `run()` method (same as sim()).
+            sim_length:  Duration of the *measurement* phase in sim-seconds. Must be > 0.
+            warmup:      Sim-seconds to run before energy/distance tracking begins.
+                         Allows the robot to settle from the initial drop before CoT
+                         is measured. Default 2.0 s. Set to 0 to disable.
+
+        Returns:
+            Cost of Transport (dimensionless), or None if the robot did not
+            move forward during the measurement phase (e.g. fell over).
+        """
+        if sim_length <= 0:
+            raise ValueError("sim_length must be positive for headless_sim.")
+
+        # Reset simulation to t=0 so each call starts from the same initial
+        # state regardless of previous runs on this instance.
+        mj.mj_resetData(self.model, self.data)
+        mj.mj_forward(self.model, self.data)
+
+        # Reset controller internal state (CPG phases, IK warm-start, etc.)
+        # so stale phase accumulation from a previous run doesn't carry over.
+        if controller is not None and hasattr(controller, 'reset'):
+            controller.reset()
+
+        # Set timestep on robot_interface
+        self.robot_interface.dt = self.model.opt.timestep
+
+        # Build control callback: sync sensors → controller → apply torques
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            if self.use_direct:
+                self._apply_controller_targets_directly()
+            else:
+                self._apply_controller_targets_torque()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        # ── Warmup phase: controller runs but energy is NOT counted ──
+        # This lets the robot settle from the initial drop before measurement.
+        warmup_end = self.data.time + warmup
+        while self.data.time < warmup_end:
+            mj.mj_step(self.model, self.data)
+
+        # ── Measurement phase: reset metrics, then accumulate ────────
+        # _start_x is set here so distance is measured from the post-warmup
+        # position, not the drop point.
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
+
+        measure_end = self.data.time + sim_length
+        while self.data.time < measure_end:
+            mj.mj_step(self.model, self.data)
+            self._accumulate_energy()
+
+        mj.set_mjcb_control(None)
+
+        return self.compute_CoT()
 
     def keyboard(self, window, key, scancode, act, mods):
         # Handle built-in keyboard commands
@@ -652,6 +718,7 @@ class MujocoSim:
         Compute Cost of Transport (dimensionless).
         """
         if self._start_x is None:
+            print("Error: _start_x is None, cannot compute CoT.")
             return None
 
         current_x = self.data.qpos[0]   # base x position
@@ -659,14 +726,10 @@ class MujocoSim:
 
         if distance <= 0:
             # Robot did not move forward — CoT undefined (likely fell over)
+            print("Warning: Robot did not move forward during measurement phase. CoT is undefined.")
             return None
 
         g = 9.81
         # CoT = E / (m * g * d)  — dimensionless cost of transport
         cot = self._energy / (self._robot_mass * g * distance)
-        return cot
-
-        g = 9.81
-        cot = self._energy / (self._robot_mass * g * distance)
-
         return cot
