@@ -450,79 +450,80 @@ class MujocoSim:
 
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
         """
-        Main simulation loop.
+        Main simulation loop (frame-rate independent, deterministic physics).
+
         Args:
-            controller: An object with a `run()` method (no model/data args).
-                        Communication goes through self.robot_interface.
-            sim_length: Duration of the simulation in seconds. If negative,
-                        runs indefinitely until window is closed.
-            slow_factor: Slow-motion factor. 1.0 = real-time, 2.0 = half speed.
+            controller: Object with a `run()` method.
+            sim_length: Duration in seconds (negative = infinite).
+            slow_factor: >1.0 = slow motion (visual only).
         """
         window, cam, opt, scene, context = self.init_graphics()
 
-        # Set timestep on robot_interface once
-        self.robot_interface.dt = self.model.opt.timestep
+        # --- Simulation parameters ---
+        dt = self.model.opt.timestep                # Fixed physics timestep
+        render_dt = 1.0 / self.render_hz            # Target render interval
+        accumulator = 0.0
 
-        # Register controller helpers (keyboard, oscillator overlay)
+        # Set timestep for external interface
+        self.robot_interface.dt = dt
+
+        # Register controller helpers
         if controller is not None:
             if hasattr(controller, 'keyboard_callback'):
                 self.controller_keyboard_callback = controller.keyboard_callback
             if hasattr(controller, 'get_oscillator_outputs'):
                 self._fig_controller = controller
 
-        # Build mjcb_control callback: sync → run controller → apply targets
+        # --- Control callback ---
         def _control_callback(model, data):
             self._sync_robot_interface()
             controller.run()
             if self.use_direct:
                 self._apply_controller_targets_directly()
-            else: 
+            else:
                 self._apply_controller_targets_torque()
 
         mj.set_mjcb_control(_control_callback if controller is not None else None)
 
+        # --- Init metrics ---
         if self._robot_mass is None:
             self._robot_mass = np.sum(self.model.body_mass)
 
         self._energy = 0.0
         self._start_x = self.data.qpos[0]
 
-        # Main loop
+        # --- Main loop ---
         while not glfw.window_should_close(window):
-            # Wall-clock time at the start of this frame — used to throttle
-            # the loop to real-time so the simulation runs at the same speed
-            # on every PC, regardless of GPU/CPU performance.
-            wall_start = time.perf_counter()
+            frame_start = time.perf_counter()
 
-            time_prev = self.data.time
+            # Amount of simulation time we want to advance this frame
+            # slow_factor > 1 → less sim-time per frame → slow motion
+            sim_time_budget = render_dt / slow_factor
+            accumulator += sim_time_budget
 
-            # Advance simulation by 1/60 sim-seconds per frame.
-            # slow_factor < 1 speeds up; slow_factor > 1 stretches real time
-            # (each frame shows less sim-time → slow motion).
-            while (self.data.time - time_prev < 1.0 / (self.render_hz * slow_factor)):
+            # --- Physics stepping (fixed dt) ---
+            while accumulator >= dt:
                 mj.mj_step(self.model, self.data)
                 self._accumulate_energy()
+                accumulator -= dt
 
+            # --- Exit condition ---
             if sim_length > 0 and self.data.time >= sim_length:
                 break
 
+            # --- Rendering ---
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
-
-            # Sleep for the remainder of the real-time frame budget (1/60 s).
-            # This ensures the animation speed is identical on fast and slow PCs.
-            # If the frame took longer than 1/60 s (PC is overloaded), we skip
-            # the sleep so we never fall further behind.
-            elapsed = time.perf_counter() - wall_start
-            sleep_time = (1.0 / self.render_hz) - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
 
             if self.dispense_in_air:
                 self.enable_air_mode(self.height)
 
-        # Clear global MuJoCo callback before tearing down GLFW.
-        # If left set, the closure referencing this sim's objects will be
-        # invoked by MuJoCo during the next model load, causing a crash.
+            # --- Frame rate control (rendering only) ---
+            elapsed = time.perf_counter() - frame_start
+            sleep_time = render_dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        # --- Cleanup ---
         mj.set_mjcb_control(None)
         glfw.destroy_window(window)
         glfw.terminate()
