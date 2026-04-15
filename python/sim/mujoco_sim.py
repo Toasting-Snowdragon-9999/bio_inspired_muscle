@@ -16,11 +16,12 @@ from shared_module.global_constants import (
 from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh
 
 class MujocoSim:
-    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0):
+    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 30.0):
         self.model = mj.MjModel.from_xml_path(model_path)
         self.data = mj.MjData(self.model)
         self.robot_interface = robot_interface
         self.print_camera_config = print_camera_config
+        self.render_hz = render_hz   # target render frequency; lower on slow PCs (e.g. 30.0)
         self.window_width = floor(1920 * window_scale)
         self.window_height = floor(1080 * window_scale)
         # Mouse interaction state
@@ -498,7 +499,7 @@ class MujocoSim:
             # Advance simulation by 1/60 sim-seconds per frame.
             # slow_factor < 1 speeds up; slow_factor > 1 stretches real time
             # (each frame shows less sim-time → slow motion).
-            while (self.data.time - time_prev < 1.0 / (60.0 * slow_factor)):
+            while (self.data.time - time_prev < 1.0 / (self.render_hz * slow_factor)):
                 mj.mj_step(self.model, self.data)
                 self._accumulate_energy()
 
@@ -512,7 +513,7 @@ class MujocoSim:
             # If the frame took longer than 1/60 s (PC is overloaded), we skip
             # the sleep so we never fall further behind.
             elapsed = time.perf_counter() - wall_start
-            sleep_time = (1.0 / 60.0) - elapsed
+            sleep_time = (1.0 / self.render_hz) - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
