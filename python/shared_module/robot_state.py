@@ -6,7 +6,7 @@ class Gait(Enum):
     # Define gait phases for each foot in the order: FL, FR, RL, RR
 
     # Primary gaits
-    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi) 
+    WALK   = (np.pi/2, 3*np.pi/2, 0.0, np.pi)  # RL → FR → RR → FL   RL → FL → RR → FR
     # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
     TROT   = (0.0, np.pi,   0.0,   np.pi)
     CANTER = (0.0, np.pi,   np.pi, 0.0)
@@ -164,6 +164,15 @@ class RobotInterface:
     @property
     def current_mode(self) -> Mode:
         return self.robot_state.current_state.mode if self.robot_state else None
+
+    @property
+    def frequency(self) -> float:
+        """Current CPG frequency in Hz. Settable: robot_interface.frequency = 2.0"""
+        return self.robot_state.current_state.frequency if self.robot_state else 0.0
+
+    @frequency.setter
+    def frequency(self, value: float):
+        self.robot_state.current_state.frequency = float(value)
 
     @property
     def current_state(self) -> State:

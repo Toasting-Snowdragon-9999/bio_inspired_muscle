@@ -73,12 +73,22 @@ class IKController:
 
         # ===== IK END =====
 
+    def reset(self) -> None:
+        """Reset all stateful controller components (CPG phases, IK warm-start).
+        Call before re-running headless_sim with changed parameters on the same instance."""
+        self.cpg.reset()
+        # Reset IK warm-start positions to home so the solver doesn't start from
+        # a stale end-of-run joint configuration.
+        for foot in Foot:
+            self.prev_q[foot] = home_position[foot]
+
     def run(self) -> None:
         """
         Step CPG, solve IK for each leg, write joint targets to robot_interface.
         Called once per simulation timestep via mjcb_control.
         """
         # ===== CPG & trajectory =====
+        self.cpg.set_frequency(self.robot_interface.frequency)  # Update CPG frequency from robot_interface (settable via property)
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()

@@ -498,10 +498,10 @@ def test_oval_traj():
     #     OvalOffset.Z_RBOTTOM: 0.01,   # rear:  stance depth (m)
     # }
     oval_offsets = {
-        OvalOffset.X_FFORE:   0.04,   # front: forward reach (m)
-        OvalOffset.X_FHIND:   0.04,   # front: rearward reach (m)
-        OvalOffset.Z_FTOP:    0.09,   # front: swing height (m)
-        OvalOffset.Z_FBOTTOM: 0.04,   # front: stance depth (m)
+        OvalOffset.X_FFORE:   0.25,   # front: forward reach (m)
+        OvalOffset.X_FHIND:   0.25,   # front: rearward reach (m)
+        OvalOffset.Z_FTOP:    0.05,   # front: swing height (m)
+        OvalOffset.Z_FBOTTOM: 0.02,   # front: stance depth (m)
         
         OvalOffset.X_RFORE:   0.03,   # rear:  forward reach (m)
         OvalOffset.X_RHIND:   0.03,   # rear:  rearward reach (m)

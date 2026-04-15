@@ -44,7 +44,7 @@ class KuramotoCpg:
             raise ValueError("RobotInterface must have a valid gait at CPG initialization.")
         
         gait_phases = np.array(gait.value)  # 4-tuple (FL, FR, RR, RL)
-        frequency = self.robot_interface.current_state.frequency
+        frequency = self.robot_interface.frequency
 
         # Coupling: all-to-all with uniform strength
         self.coupling_weights = np.zeros((self.neurons_cnt, self.neurons_cnt))
@@ -71,6 +71,17 @@ class KuramotoCpg:
         ]
 
         self.d_theta = np.zeros(self.neurons_cnt)
+
+    def reset(self) -> None:
+        """Reset oscillator phases to the gait's initial values and clear accumulated state.
+        Call before re-running the simulation with a new parameter set."""
+        gait_phases = np.array(self.robot_interface.current_gait.value)
+        frequency = self.robot_interface.frequency
+        for i, n in enumerate(self.neurons):
+            n.phase = gait_phases[i]
+            n.frequency = frequency
+        self.d_theta = np.zeros(self.neurons_cnt)
+        self.time_passed = 0.0
 
     def set_frequency(self, frequency: float, index: int = None) -> None:
         if index is None:
