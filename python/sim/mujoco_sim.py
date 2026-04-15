@@ -448,7 +448,7 @@ class MujocoSim:
     def set_bias_compensation(self, enabled: bool = True):
         self.use_bias_compensation = bool(enabled)
 
-    def sim(self, controller=None, sim_length=-1, slow_factor=1.0):
+    def sim(self, controller=None, sim_length=-1, slow_factor=1.0, warmup: float = 2.0):
         """
         Main simulation loop (frame-rate independent, deterministic physics).
 
@@ -456,6 +456,9 @@ class MujocoSim:
             controller: Object with a `run()` method.
             sim_length: Duration in seconds (negative = infinite).
             slow_factor: >1.0 = slow motion (visual only).
+            warmup: Sim-seconds before energy/distance tracking begins.
+                    Lets the robot settle from the initial drop so CoT
+                    is not polluted by the transient.  Default 2.0 s.
         """
         window, cam, opt, scene, context = self.init_graphics()
 
@@ -489,8 +492,10 @@ class MujocoSim:
         if self._robot_mass is None:
             self._robot_mass = np.sum(self.model.body_mass)
 
+        # Energy/distance tracking is deferred until after warmup
         self._energy = 0.0
-        self._start_x = self.data.qpos[0]
+        self._start_x = None
+        metrics_started = False
 
         # --- Main loop ---
         while not glfw.window_should_close(window):
@@ -504,7 +509,13 @@ class MujocoSim:
             # --- Physics stepping (fixed dt) ---
             while accumulator >= dt:
                 mj.mj_step(self.model, self.data)
-                self._accumulate_energy()
+                # Start accumulating energy only after warmup period
+                if not metrics_started and self.data.time >= warmup:
+                    metrics_started = True
+                    self._energy = 0.0
+                    self._start_x = self.data.qpos[0]
+                if metrics_started:
+                    self._accumulate_energy()
                 accumulator -= dt
 
             # --- Exit condition ---
