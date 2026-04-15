@@ -1,5 +1,6 @@
 from pyexpat import model
 import os, sys
+import time
 from math import floor
 import numpy as np
 import mujoco as mj 
@@ -487,9 +488,16 @@ class MujocoSim:
 
         # Main loop
         while not glfw.window_should_close(window):
+            # Wall-clock time at the start of this frame — used to throttle
+            # the loop to real-time so the simulation runs at the same speed
+            # on every PC, regardless of GPU/CPU performance.
+            wall_start = time.perf_counter()
+
             time_prev = self.data.time
 
-            # Simulate at 60 Hz, scaled by slow_factor
+            # Advance simulation by 1/60 sim-seconds per frame.
+            # slow_factor < 1 speeds up; slow_factor > 1 stretches real time
+            # (each frame shows less sim-time → slow motion).
             while (self.data.time - time_prev < 1.0 / (60.0 * slow_factor)):
                 mj.mj_step(self.model, self.data)
                 self._accumulate_energy()
@@ -498,6 +506,15 @@ class MujocoSim:
                 break
 
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
+
+            # Sleep for the remainder of the real-time frame budget (1/60 s).
+            # This ensures the animation speed is identical on fast and slow PCs.
+            # If the frame took longer than 1/60 s (PC is overloaded), we skip
+            # the sleep so we never fall further behind.
+            elapsed = time.perf_counter() - wall_start
+            sleep_time = (1.0 / 60.0) - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
             if self.dispense_in_air:
                 self.enable_air_mode(self.height)
