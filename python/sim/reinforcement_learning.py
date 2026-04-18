@@ -32,7 +32,7 @@ import numpy as np
 # ── Cross-module imports using the sys.path.insert pattern ────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import Gait
-from gait_env import GaitParamEnv, RewardWeights, ALL_PARAM_KEYS, default_params
+from gait_env import GaitParamEnv, RewardWeights, ALL_PARAM_KEYS, SHAPE_KEYS, default_params
 
 
 # ─────────────────────────────────────────────────────────────────────────────
