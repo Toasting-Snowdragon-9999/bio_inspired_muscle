@@ -69,9 +69,10 @@ class TrialLogger:
     ) -> None:
         """Append one evaluation row."""
         row: list[Any] = [trial_num, f"{reward:.6f}"]
-        # Metrics in fixed order
+        # Metrics in fixed order — handle None values (e.g. cot when robot fell)
         for col in self.METRIC_COLS:
-            row.append(f"{metrics.get(col, 0.0):.6f}")
+            val = metrics.get(col, 0.0)
+            row.append(f"{val:.6f}" if val is not None else "")
         # Parameters in ALL_PARAM_KEYS order
         for key in ALL_PARAM_KEYS:
             row.append(f"{params.get(key, 0.0):.6f}")
@@ -209,6 +210,7 @@ def train_ppo(
         # SB3 requires batch_size > 1 and n_steps >= batch_size, so we buffer
         # 8 episodes before each PPO update — a reasonable mini-batch for this
         # low-dimensional parameter search.
+        # Use CPU — PPO with MlpPolicy has poor GPU utilisation.
         model = PPO(
             "MlpPolicy",
             env,
@@ -218,6 +220,7 @@ def train_ppo(
             learning_rate=3e-4,
             clip_range=0.2,
             ent_coef=0.01,        # encourage exploration in parameter space
+            device="cpu",
             verbose=1,
         )
 
