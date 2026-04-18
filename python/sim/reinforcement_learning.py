@@ -205,13 +205,15 @@ def train_ppo(
         print(f"[PPO] Resuming from checkpoint: {resume_path}")
         model = PPO.load(resume_path, env=env)
     else:
-        # n_steps=1 and batch_size=1 because each episode is a single step
-        # (env returns terminated=True immediately after one action).
+        # Each episode is a single step (env returns terminated=True immediately).
+        # SB3 requires batch_size > 1 and n_steps >= batch_size, so we buffer
+        # 8 episodes before each PPO update — a reasonable mini-batch for this
+        # low-dimensional parameter search.
         model = PPO(
             "MlpPolicy",
             env,
-            n_steps=1,
-            batch_size=1,
+            n_steps=8,
+            batch_size=8,
             n_epochs=10,
             learning_rate=3e-4,
             clip_range=0.2,
