@@ -387,20 +387,20 @@ def print_results(
 
     # ── Copy-pasteable EllipsoidConfig for code insertion ────────────────────
     print("-" * 72)
-    print("  EllipsoidConfig (copy into code):")
-    print("        EllipsoidConfig(")
+    print("  Copy-pasteable EllipsoidConfig:\n")
+    print("EllipsoidConfig(")
     front_keys = [k for k in SHAPE_KEYS if k.startswith("front_")]
     rear_keys = [k for k in SHAPE_KEYS if k.startswith("rear_")]
     for key in front_keys:
         val = best_params.get(key, 0.0)
-        print(f"            {key:<20s}= {val:.6f},")
+        print(f"    {key:<14s} = {val:.2f},")
     print()
     for key in rear_keys:
         val = best_params.get(key, 0.0)
-        print(f"            {key:<20s}= {val:.6f},")
-    print("        )")
-    print(f"  freq = {best_params.get('freq', 0.0):.6f}")
-    print(f"  duty_factor = {best_params.get('duty_factor', 0.0):.6f}")
+        print(f"    {key:<14s} = {val:.2f},")
+    print(")")
+    print(f"\nfreq = {best_params.get('freq', 0.0):.2f}")
+    print(f"duty_factor = {best_params.get('duty_factor', 0.0):.2f}")
 
     # ── Copy-pasteable command for ai_fix_param.py ───────────────────────────
     param_args = " ".join(
@@ -408,7 +408,7 @@ def print_results(
     )
     print("-" * 72)
     print("  Re-run best gait with:")
-    print(f"    python ai_fix_param.py --gait {gait_name} {param_args}")
+    print(f"    python sim/ai_fix_param.py --gait {gait_name} {param_args}")
     print("=" * 72 + "\n")
 
 
