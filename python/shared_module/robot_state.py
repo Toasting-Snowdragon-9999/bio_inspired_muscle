@@ -2,19 +2,17 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
 
+# Define gait phases for each foot in the order: FL, FR, RL, RR
 class Gait(Enum):
-    # Define gait phases for each foot in the order: FL, FR, RL, RR
-
-    # Primary gaits
-    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)  # RL → FR → RR → FL   RL → FL → RR → FR
-    # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
+    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)
     TROT   = (0.0, np.pi,   0.0,   np.pi)
     CANTER = (1.3 * np.pi, 0.85 * np.pi, 0.0, 0.6 * np.pi)
+    GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
+
+    # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
     # CANTER = (1.25 * np.pi,  1.75 * np.pi, 0.50 * np.pi, 0.0)
     # BOUND  = (0.0, 0.0,     np.pi, np.pi)
     # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
-    GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
-
 
 
     # Transitional     
