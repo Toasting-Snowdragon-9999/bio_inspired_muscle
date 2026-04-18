@@ -72,7 +72,60 @@ class IKController:
             self.solvers[foot] = LevenbergMarquardtIK(foot)
             self.prev_q[foot] = home_position[foot]
 
+        self.turn_rate = 0
+        self.time = 0
+        self.enable_turn = False
+        self.last_foot_targets = None
+
         # ===== IK END =====
+
+    def apply_turning(self, foot_targets, foot_velocities, phase_outputs):
+        """
+        Apply turning ONLY during stance phase (fixes weird rear leg motion)
+        """
+
+        ramp = min(1.0, self.time / 2.0)
+        turn = self.turn_rate * ramp
+
+        rear_gain  = 0.10
+        front_gain = 0.05
+
+        for idx, foot in enumerate(Foot):
+            pos = foot_targets[foot]
+            vel = foot_velocities[foot]
+
+            # Get phase
+            phase = phase_outputs[idx] % (2 * np.pi)
+            duty = self.robot_interface.duty_factor
+
+            # Normalize phase [0,1]
+            phi = phase / (2 * np.pi)
+
+            # 👉 Only apply during stance
+            if phi < duty:
+
+                if foot in [Foot.FL, Foot.RL]:
+                    side = -1.0
+                else:
+                    side = +1.0
+
+                if foot in [Foot.RL, Foot.RR]:
+                    gain = rear_gain
+                else:
+                    gain = front_gain
+
+                if foot in [Foot.RL, Foot.RR]:
+                    dx = -side * turn * gain   # 👈 flip sign for rear
+                else:
+                    dx = side * turn * gain
+
+                pos.x += dx
+                vel.x += dx
+
+                # safety clamp
+                pos.x = np.clip(pos.x, -0.22, 0.22)
+
+        return foot_targets, foot_velocities
 
     def run(self) -> None:
         """
@@ -80,11 +133,30 @@ class IKController:
         Called once per simulation timestep via mjcb_control.
         """
         # ===== CPG & trajectory =====
+        if self.enable_turn:
+            dt = self.robot_interface.dt if hasattr(self.robot_interface, "dt") else 0.002
+            self.time += dt
+
+            if self.time < 3.0:
+                self.turn_rate = 0.0   # straight
+            else:
+                self.turn_rate = 0.5   # start turning left
+        else:
+            self.turn_rate = 0.0
+
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()
         foot_targets, foot_velocities = self.traj_builder.build_trajectory(phase_outputs, phase_velocities)
         # Build proper vel dict from dict[Foot, Coordinate] to dict[Foot, np.ndarray]
+
+        # Turning
+        if self.enable_turn:
+            foot_targets, foot_velocities = self.apply_turning(
+                foot_targets, foot_velocities, phase_outputs
+            )
+        
+        self.last_foot_targets = foot_targets
 
         pos_targets = {
             foot: np.array([pos.x, pos.y, pos.z]) 

@@ -568,23 +568,24 @@ def test_ellipsoid_traj():
 
     # EllipsoidConfig now has independent front_* / rear_* parameters.
     # Front legs (FL, FR) and rear legs (RL, RR) can have different shapes.
-    cfg = EllipsoidConfig(
-        front_x_fore   = 0.1,  # forward reach — front legs (m)
-        front_x_hind   = 0.08,  # rearward reach — front legs (m)
-        front_z_top    = 0.05,   # swing height — front legs (m)
-        front_z_bottom = 0.02,   # stance depth — front legs (m)
-        front_rotation = 0.20,   # ~11° forward tilt — front legs
-        front_skew     = 0.00,   # x-displacement (m) — shift ellipse fwd/back, front legs
 
-        rear_x_fore    = 0.1,  # forward reach — rear legs (m)
-        rear_x_hind    = 0.05,  # rearward reach — rear legs (m)
-        rear_z_top     = 0.07,   # swing height — rear legs (m)
-        rear_z_bottom  = 0.02,   # stance depth — rear legs (m)
-        rear_rotation  = -0.20,   # ~11° forward tilt — rear legs
-        rear_skew      = -0.02,   # x-displacement (m) — shift ellipse fwd/back, rear legs
+    cfg = EllipsoidConfig( # CANTER FLIGHT - ~0.4 duty, ~1.8 Hz
+        front_x_fore   = 0.15,   # more forward reach (lead leg effect)
+        front_x_hind   = 0.09,   # moderate backward
+        front_z_top    = 0.11,   # slightly higher than trot (more flight)
+        front_z_bottom = 0.02,   # keep low stance
+        front_rotation = 0.06,   # more forward tilt than trot
+        front_skew     = 0.045,  # forward bias (important for asymmetry)
+
+        rear_x_fore    = 0.07,   # less forward than front
+        rear_x_hind    = 0.15,   # strong push-off
+        rear_z_top     = 0.10,   # similar to front but slightly lower
+        rear_z_bottom  = 0.015,  # slightly shallower stance
+        rear_rotation  = -0.1, # stronger backward tilt (propulsion)
+        rear_skew      = -0.04,  # slight backward bias
     )
     # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
-    builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.6)
+    builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.38)
 
     # Simulate 5 s, collect trajectories
     seconds = 5.0
