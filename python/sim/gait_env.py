@@ -127,9 +127,15 @@ def make_bounds(gait: Gait, margin: float = 0.20, min_half_range: float = 0.02) 
     for i, key in enumerate(ALL_PARAM_KEYS):
         val = ref[key]
         if key == "freq":
-            # Absolute bounds for frequency
-            low[i] = 0.5
-            high[i] = 4.0
+            # Per-gait frequency bounds to keep values realistic
+            freq_bounds = {
+                Gait.WALK:   (0.8, 1.8),
+                Gait.TROT:   (1.2, 2.5),
+                Gait.AMBLE:  (0.8, 2.0),
+                Gait.CANTER: (1.6, 4.0),
+                Gait.GALLOP: (1.6, 4.0),
+            }
+            low[i], high[i] = freq_bounds.get(gait, (0.5, 4.0))
         elif key == "duty_factor":
             # Absolute bounds for duty factor
             low[i] = 0.2
