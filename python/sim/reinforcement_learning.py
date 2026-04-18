@@ -147,7 +147,7 @@ def _make_logging_callback(
             if self.trial_count % print_every == 0:
                 avg_r = np.mean(self._recent_rewards[-print_every:])
                 feas_rate = self._feasible_count / self.trial_count
-                best_cot = self.best_metrics.get("cot", float("nan"))
+                best_cot = self.best_metrics.get("cot") or float("nan")
                 print(
                     f"  [PPO] trial {self.trial_count:>5d} | "
                     f"avg_R(last {print_every})={avg_r:+.3f} | "
@@ -335,7 +335,7 @@ def train_cma(
         # Progress print every generation
         gen_best = -min(fitnesses)
         feas_rate = feasible_count / max(trial_count, 1)
-        best_cot = best_metrics.get("cot", float("nan"))
+        best_cot = best_metrics.get("cot") or float("nan")
         if generation % 10 == 0 or generation == 1:
             print(
                 f"  [CMA-ES] gen {generation:>4d} | "
@@ -369,12 +369,16 @@ def print_results(
     print("\n" + "=" * 72)
     print(f"  {algo} — Best Result")
     print("=" * 72)
+    def _fmt(val, fmt=".4f"):
+        """Format a metric value, treating None as NaN."""
+        return f"{val:{fmt}}" if val is not None else "nan"
+
     print(f"  Reward   : {best_reward:+.4f}")
-    print(f"  COT      : {best_metrics.get('cot', float('nan')):.4f}")
-    print(f"  Distance : {best_metrics.get('distance', float('nan')):.4f} m")
-    print(f"  Velocity : {best_metrics.get('velocity', float('nan')):.4f} m/s")
-    print(f"  Avg Tilt : {best_metrics.get('avg_tilt', float('nan')):.4f} rad")
-    print(f"  Survived : {best_metrics.get('survived', 0.0):.0f}")
+    print(f"  COT      : {_fmt(best_metrics.get('cot'))}")
+    print(f"  Distance : {_fmt(best_metrics.get('distance', 0.0))} m")
+    print(f"  Velocity : {_fmt(best_metrics.get('velocity', 0.0))} m/s")
+    print(f"  Avg Tilt : {_fmt(best_metrics.get('avg_tilt', 0.0))} rad")
+    print(f"  Survived : {_fmt(best_metrics.get('survived', 0.0), '.0f')}")
     print("-" * 72)
     print("  Parameters:")
     for key in ALL_PARAM_KEYS:
