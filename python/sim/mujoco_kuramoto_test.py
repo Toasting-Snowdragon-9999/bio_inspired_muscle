@@ -14,19 +14,19 @@ from shared_module.robot_state import Foot, RobotInterface, State, Mode, Gait, T
 def get_cfg(gait: Gait) -> EllipsoidConfig:
     if gait == Gait.WALK: # IDEAL
         return EllipsoidConfig(
-            front_x_fore   = 0.156633,
-            front_x_hind   = 0.095000,
-            front_z_top    = 0.111989,
-            front_z_bottom = 0.005000,
-            front_rotation = -0.000111,
-            front_skew     = -0.008253,
+            front_x_fore   = 0.14,
+            front_x_hind   = 0.08,
+            front_z_top    = 0.10,
+            front_z_bottom = 0.02,
+            front_rotation = 0.05,
+            front_skew     = 0.00,
 
-            rear_x_fore    = 0.075000,
-            rear_x_hind    = 0.109153,
-            rear_z_top     = 0.086510,
-            rear_z_bottom  = 0.005824,
-            rear_rotation  = -0.015000,
-            rear_skew      = -0.010853,
+            rear_x_fore    = 0.06,
+            rear_x_hind    = 0.14,
+            rear_z_top     = 0.10,
+            rear_z_bottom  = 0.02,
+            rear_rotation  = -0.05,
+            rear_skew      = -0.00,
         )
 
     elif gait == Gait.TROT: # IDEAL
@@ -45,26 +45,43 @@ def get_cfg(gait: Gait) -> EllipsoidConfig:
             rear_rotation  = -0.060026,
             rear_skew      = -0.015000,
         )
-    
-    elif gait == Gait.BOUND:
+    elif gait == Gait.CANTER:
         return EllipsoidConfig(
-            front_x_fore   = 0.16,  # forward reach — front legs (m)
-            front_x_hind   = 0.06,  # rearward reach — front legs (m)
-            front_z_top    = 0.09,   # swing height — front legs (m)
-            front_z_bottom = 0.02,   # stance depth — front legs (m)
-            front_rotation = 0.20,   # ~11° forward tilt — front legs
-            front_skew     = 0.00,   # x-displacement (m) — shift ellipse fwd/back, front legs
+            front_x_fore   = 0.14,
+            front_x_hind   = 0.07,
+            front_z_top    = 0.12,
+            front_z_bottom = 0.02,
+            front_rotation = 0.10,
+            front_skew     = 0.02,
 
-            rear_x_fore    = 0.04,  # forward reach — rear legs (m)
-            rear_x_hind    = 0.16,  # rearward reach — rear legs (m)
-            rear_z_top     = 0.09,   # swing height — rear legs (m)
-            rear_z_bottom  = 0.02,   # stance depth — rear legs (m)
-            rear_rotation  = -0.20,   # ~11° forward tilt — rear legs
-            rear_skew      = -0.00,   # x-displacement (m) — shift ellipse fwd/back, rear legs
+            rear_x_fore    = 0.06,
+            rear_x_hind    = 0.14,
+            rear_z_top     = 0.10,
+            rear_z_bottom  = 0.03,
+            rear_rotation  = -0.05,
+            rear_skew      = -0.03,
+        )
+    elif gait == Gait.AMBLE:
+        return EllipsoidConfig(
+            front_x_fore   = 0.14,
+            front_x_hind   = 0.08,
+            front_z_top    = 0.12,
+            front_z_bottom = 0.02,
+            front_rotation = 0.05,
+            front_skew     = -0.03,
+
+            rear_x_fore    = 0.06,
+            rear_x_hind    = 0.14,
+            rear_z_top     = 0.10,
+            rear_z_bottom  = 0.02,
+            rear_rotation  = -0.05,
+            rear_skew      = -0.00,
         )
 
 def elip_traj_test():
-    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.WALK, frequency=1.405), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=0.268269)
+    freq = 1.675
+    duty_factor = 0.4
+    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.AMBLE, frequency=freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=duty_factor)
 
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     sim = MujocoSim(xml_path, robot_interface=robot_interface, window_scale=2.0)
@@ -78,7 +95,7 @@ def elip_traj_test():
     )
 
     controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, ellipsoid_config=cfg)
-    sim.sim(controller=controller, sim_length=5, slow_factor=2.0)
+    sim.sim(controller=controller, sim_length=-1, slow_factor=2.0)
     
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)

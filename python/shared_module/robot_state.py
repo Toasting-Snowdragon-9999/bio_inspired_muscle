@@ -6,18 +6,20 @@ class Gait(Enum):
     # Define gait phases for each foot in the order: FL, FR, RL, RR
 
     # Primary gaits
-    WALK   = (np.pi/2, 3*np.pi/2, 0.0, np.pi)  # RL → FR → RR → FL   RL → FL → RR → FR
+    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)  # RL → FR → RR → FL   RL → FL → RR → FR
     # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
     TROT   = (0.0, np.pi,   0.0,   np.pi)
-    CANTER = (0.0, np.pi,   np.pi, 0.0)
+    CANTER = (1.3 * np.pi, 0.85 * np.pi, 0.0, 0.6 * np.pi)
+    # CANTER = (1.25 * np.pi,  1.75 * np.pi, 0.50 * np.pi, 0.0)
     # BOUND  = (0.0, 0.0,     np.pi, np.pi)
     # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
-    GALLOP = (2*np.pi*0.7, np.pi,     0.0, 2*np.pi*0.2)
+    GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
+
 
 
     # Transitional     
     PACE   = (0.0, np.pi,   np.pi, 0.0)
-    AMBLE = (0.0, np.pi/2, np.pi, np.pi/2) # TODO
+    AMBLE = (np.pi/2, 3*np.pi/2, 0.0, np.pi)
 
     NONE   = (0.0, 0.0,     0.0,   0.0)
 

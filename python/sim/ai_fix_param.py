@@ -14,39 +14,11 @@ from shared_module.robot_state import Foot, RobotInterface, State, Mode, Gait, T
 # ── Penalty COT returned when a trial fails (robot fell, IK diverged, etc.) ──
 PENALTY_COT = 10.0
 
-# ── Default parameter values for the WALK gait ──────────────────────────────
-DEFAULTS = {
-    "freq":           1.40,
-    "duty_factor":    0.27,
-    "front_x_fore":   0.14,
-    "front_x_hind":   0.08,
-    "front_z_top":    0.10,
-    "front_z_bottom": 0.02,
-    "front_rotation": 0.00,
-    "front_skew":     0.00,
-    "rear_x_fore":    0.06,
-    "rear_x_hind":    0.12,
-    "rear_z_top":     0.10,
-    "rear_z_bottom":  0.02,
-    "rear_rotation": -0.00,
-    "rear_skew":      0.00,
-}
-
 # ── Search bounds: ±15% of default magnitude, with minimum range for near-zero defaults ──
-# The IK solver and sim are very sensitive to parameter changes — even ±25%
-# pushes most random samples into infeasible territory.  ±15% keeps a higher
-# fraction of trials feasible so the Gaussian Process gets useful data.
+# Keeping bounds tight increases the feasibility rate (viable sims per random trial).
+# The GP only gets to see feasible points, so a higher feasibility rate means
+# more useful signal per trial.
 MIN_HALF_RANGE = 0.015
-
-def _make_bounds(keys: list[str]) -> list[tuple[float, float]]:
-    """Build (low, high) bounds for the given parameter keys."""
-    bounds = []
-    for k in keys:
-        v = DEFAULTS[k]
-        half = max(abs(v) * 0.15, MIN_HALF_RANGE)
-        bounds.append((v - half, v + half))
-    return bounds
-
 
 # ── 12 shape parameter names (excludes freq and duty_factor) ─────────────────
 SHAPE_KEYS: list[str] = [
@@ -56,36 +28,157 @@ SHAPE_KEYS: list[str] = [
     "rear_rotation", "rear_skew",
 ]
 
-# ── All parameter names (freq + duty_factor + shape) ─────────────────────────
-ALL_KEYS: list[str] = ["freq", "duty_factor"] + SHAPE_KEYS
+# ── All optimised parameter names (freq + shape; duty_factor is always fixed) ─
+ALL_KEYS: list[str] = ["freq"] + SHAPE_KEYS
+
+
+def default_cfg(gait: Gait) -> dict[str, float]:
+    """
+    Return a dict of hardcoded default parameters for the requested gait.
+    duty_factor is included here but is never modified by the sweep — it is
+    passed verbatim into every simulation run.
+    """
+    if gait == Gait.WALK:
+        return {
+            "freq":           1.40,
+            "duty_factor":    0.24,
+            "front_x_fore":   0.14,
+            "front_x_hind":   0.08,
+            "front_z_top":    0.10,
+            "front_z_bottom": 0.02,
+            "front_rotation": 0.05,
+            "front_skew":     0.00,
+            "rear_x_fore":    0.06,
+            "rear_x_hind":    0.14,
+            "rear_z_top":     0.10,
+            "rear_z_bottom":  0.02,
+            "rear_rotation":  -0.05,
+            "rear_skew":      0.00,
+        }
+    elif gait == Gait.TROT:
+        return {
+            "freq":           1.95,
+            "duty_factor":    0.50,
+            "front_x_fore":   0.123,
+            "front_x_hind":   0.095,
+            "front_z_top":    0.104,
+            "front_z_bottom": 0.025,
+            "front_rotation": 0.046,
+            "front_skew":     0.035,
+            "rear_x_fore":    0.075,
+            "rear_x_hind":    0.122,
+            "rear_z_top":     0.095,
+            "rear_z_bottom":  0.005,
+            "rear_rotation":  -0.060,
+            "rear_skew":      -0.015,
+        }
+    elif gait == Gait.AMBLE:
+        return {
+            "freq":           1.675,
+            "duty_factor":    0.40,
+            "front_x_fore":   0.14,
+            "front_x_hind":   0.08,
+            "front_z_top":    0.10,
+            "front_z_bottom": 0.02,
+            "front_rotation": 0.05,
+            "front_skew":     0.00,
+            "rear_x_fore":    0.06,
+            "rear_x_hind":    0.14,
+            "rear_z_top":     0.10,
+            "rear_z_bottom":  0.02,
+            "rear_rotation":  -0.05,
+            "rear_skew":      0.00,
+        }
+    elif gait == Gait.CANTER:
+        return {
+            "freq":           3.50,
+            "duty_factor":    0.31,
+            "front_x_fore":   0.14,
+            "front_x_hind":   0.07,
+            "front_z_top":    0.12,
+            "front_z_bottom": 0.02,
+            "front_rotation": 0.10,
+            "front_skew":     0.02,
+            "rear_x_fore":    0.06,
+            "rear_x_hind":    0.15,
+            "rear_z_top":     0.10,
+            "rear_z_bottom":  0.03,
+            "rear_rotation":  -0.05,
+            "rear_skew":      -0.03,
+        }
+    elif gait == Gait.GALLOP:
+        return {
+            "freq":           3.50,
+            "duty_factor":    0.65,
+            "front_x_fore":   0.14,
+            "front_x_hind":   0.06,
+            "front_z_top":    0.14,
+            "front_z_bottom": 0.02,
+            "front_rotation": 0.00,
+            "front_skew":     0.00,
+            "rear_x_fore":    0.06,
+            "rear_x_hind":    0.16,
+            "rear_z_top":     0.14,
+            "rear_z_bottom":  0.02,
+            "rear_rotation":  0.00,
+            "rear_skew":      0.00,
+        }
+    else:
+        # Fallback: use WALK defaults for unknown gaits
+        return default_cfg(Gait.WALK)
+
+
+def _make_bounds(keys: list[str], reference: dict[str, float]) -> list[tuple[float, float]]:
+    """Build (low, high) bounds for the given parameter keys relative to a reference dict."""
+    bounds = []
+    for k in keys:
+        v = reference[k]
+        # ±15% — keeps feasibility rate high enough for the GP to learn
+        half = max(abs(v) * 0.15, MIN_HALF_RANGE)
+        bounds.append((v - half, v + half))
+    return bounds
 
 
 def parse_args() -> argparse.Namespace:
+    # ── Pre-parse to find --gait so we can load defaults from default_cfg ────
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--gait", type=str, default="WALK")
+    known, _ = pre.parse_known_args()
+    try:
+        gait_enum = Gait[known.gait.upper()]
+    except KeyError:
+        gait_enum = Gait.WALK
+    D = default_cfg(gait_enum)  # hardcoded defaults for this gait
+
     p = argparse.ArgumentParser(
         description="Run the ellipsoid trajectory sim with configurable EllipsoidConfig parameters.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    # ── Gait selection ────────────────────────────────────────────────────────
+    p.add_argument("--gait", type=str, default="WALK",
+                   help="Gait name (WALK, TROT, CANTER, GALLOP). Sets param defaults.")
     # ── Front legs (FL, FR) ──────────────────────────────────────────────────
-    p.add_argument("--freq",   type=float, default=1.00,  help="Gait frequency (Hz)")
-    p.add_argument("--front_x_fore",   type=float, default=0.14,  help="Front: forward reach (m)")
-    p.add_argument("--front_x_hind",   type=float, default=0.08,  help="Front: rearward reach (m)")
-    p.add_argument("--front_z_top",    type=float, default=0.10,  help="Front: swing height (m)")
-    p.add_argument("--front_z_bottom", type=float, default=0.02,  help="Front: stance depth (m)")
-    p.add_argument("--front_rotation", type=float, default=0.00,  help="Front: ellipse rotation (rad)")
-    p.add_argument("--front_skew",     type=float, default=0.00,  help="Front: x-displacement (m)")
+    p.add_argument("--freq",           type=float, default=D["freq"],           help="Gait frequency (Hz)")
+    p.add_argument("--front_x_fore",   type=float, default=D["front_x_fore"],   help="Front: forward reach (m)")
+    p.add_argument("--front_x_hind",   type=float, default=D["front_x_hind"],   help="Front: rearward reach (m)")
+    p.add_argument("--front_z_top",    type=float, default=D["front_z_top"],    help="Front: swing height (m)")
+    p.add_argument("--front_z_bottom", type=float, default=D["front_z_bottom"], help="Front: stance depth (m)")
+    p.add_argument("--front_rotation", type=float, default=D["front_rotation"], help="Front: ellipse rotation (rad)")
+    p.add_argument("--front_skew",     type=float, default=D["front_skew"],     help="Front: x-displacement (m)")
     # ── Rear legs (RL, RR) ────────────────────────────────────────────────────
-    p.add_argument("--rear_x_fore",    type=float, default=0.06,  help="Rear:  forward reach (m)")
-    p.add_argument("--rear_x_hind",    type=float, default=0.12,  help="Rear:  rearward reach (m)")
-    p.add_argument("--rear_z_top",     type=float, default=0.10,  help="Rear:  swing height (m)")
-    p.add_argument("--rear_z_bottom",  type=float, default=0.02,  help="Rear:  stance depth (m)")
-    p.add_argument("--rear_rotation",  type=float, default=-0.00, help="Rear:  ellipse rotation (rad)")
-    p.add_argument("--rear_skew",      type=float, default=0.00,  help="Rear:  x-displacement (m)")
-    # ── Duty factor ───────────────────────────────────────────────────────────
-    p.add_argument("--duty_factor",    type=float, default=0.27,  help="Fraction of cycle in stance (0–1)")
+    p.add_argument("--rear_x_fore",    type=float, default=D["rear_x_fore"],    help="Rear:  forward reach (m)")
+    p.add_argument("--rear_x_hind",    type=float, default=D["rear_x_hind"],    help="Rear:  rearward reach (m)")
+    p.add_argument("--rear_z_top",     type=float, default=D["rear_z_top"],     help="Rear:  swing height (m)")
+    p.add_argument("--rear_z_bottom",  type=float, default=D["rear_z_bottom"],  help="Rear:  stance depth (m)")
+    p.add_argument("--rear_rotation",  type=float, default=D["rear_rotation"],  help="Rear:  ellipse rotation (rad)")
+    p.add_argument("--rear_skew",      type=float, default=D["rear_skew"],      help="Rear:  x-displacement (m)")
+    # ── Duty factor (fixed, never swept) ─────────────────────────────────────
+    p.add_argument("--duty_factor",    type=float, default=D["duty_factor"],
+                   help="Fraction of cycle in stance (0–1). Fixed during sweep — not optimised.")
     # ── Sweep mode ────────────────────────────────────────────────────────────
-    p.add_argument("--sweep",    action="store_true",       help="Run Bayesian optimisation sweep instead of a single sim")
-    p.add_argument("--n_calls",  type=int, default=1000,    help="Total optimisation evaluations (phase 1 + phase 2)")
-    p.add_argument("--output",   type=str, default=None,    help="CSV output path (default: sweep_results_<timestamp>.csv)")
+    p.add_argument("--sweep",    action="store_true",    help="Run Bayesian optimisation sweep instead of a single sim")
+    p.add_argument("--n_calls",  type=int, default=1000, help="Total optimisation evaluations per phase-1 run")
+    p.add_argument("--output",   type=str, default=None, help="CSV output path (default: sweep_results_<timestamp>.csv)")
     return p.parse_args()
 
 
@@ -94,11 +187,11 @@ def parse_args() -> argparse.Namespace:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_sim_and_controller(
-    freq: float, cfg: EllipsoidConfig, duty_factor: float = 0.5
+    freq: float, cfg: EllipsoidConfig, duty_factor: float = 0.5, gait: Gait = Gait.WALK
 ) -> tuple[MujocoSim, IKController, RobotInterface]:
     """Create a fresh MujocoSim + IKController for the given parameters."""
     robot_interface = RobotInterface(
-        starting_state=State(mode=Mode.MOVING, gait=Gait.WALK, frequency=freq),
+        starting_state=State(mode=Mode.MOVING, gait=gait, frequency=freq),
         trajectory_method=TrajectoryMethod.ELLIPSOID,
         duty_factor=duty_factor,
     )
@@ -136,18 +229,19 @@ def _dict_to_cfg(d: dict) -> EllipsoidConfig:
     )
 
 
-def evaluate_params(param_dict: dict, verbose: bool = False) -> float:
+def evaluate_params(param_dict: dict, duty_factor: float, gait: Gait = Gait.WALK, verbose: bool = False) -> float:
     """
     Run one headless simulation and return the COT.
+    duty_factor is passed explicitly and is never varied by the optimiser.
+    gait controls the CPG phase offsets — must match the intended gait pattern.
     Returns PENALTY_COT on any failure (robot fell, IK error, etc.).
     Suppresses MuJoCo/IK warnings unless verbose=True.
     """
     import io, contextlib
-    freq = param_dict.get("freq", DEFAULTS["freq"])
-    duty_factor = param_dict.get("duty_factor", DEFAULTS["duty_factor"])
+    freq = param_dict["freq"]
     cfg = _dict_to_cfg(param_dict)
     try:
-        sim, controller, _ = _build_sim_and_controller(freq, cfg, duty_factor=duty_factor)
+        sim, controller, _ = _build_sim_and_controller(freq, cfg, duty_factor=duty_factor, gait=gait)
         # Suppress noisy MuJoCo/IK warnings during headless sweep runs
         if verbose:
             cot = sim.headless_sim(controller=controller, sim_length=5.0, warmup=2.0)
@@ -165,10 +259,10 @@ def evaluate_params(param_dict: dict, verbose: bool = False) -> float:
 # Single-run entry — GUI sim with 2 s warmup before COT measurement
 # ─────────────────────────────────────────────────────────────────────────────
 
-def elip_traj_test():
+def elip_traj_test(gait_enum: Gait = Gait.WALK):
     args = parse_args()
 
-    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=Gait.WALK, frequency=args.freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=args.duty_factor)
+    robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=gait_enum, frequency=args.freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=args.duty_factor)
 
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     sim = MujocoSim(xml_path, robot_interface=robot_interface, window_scale=2.0)
@@ -202,192 +296,280 @@ def elip_traj_test():
 # Bayesian optimisation sweep
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_sweep(n_calls: int, output_path: str) -> None:
+def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], gait: Gait = Gait.WALK) -> None:
     """
-    Two-phase Bayesian optimisation of WALK gait ellipsoid trajectory parameters.
+    Two-phase Bayesian optimisation of ellipsoid trajectory parameters.
 
-    Phase 1 — Shape parameters only (freq and duty_factor fixed at defaults):
-        Uses ~80% of the evaluation budget to explore the 12-dimensional shape space.
-    Phase 2 — All 14 parameters (freq + duty_factor + shape):
-        Uses ~20% of the budget, seeded with the phase 1 best, to also refine
-        freq and duty_factor.  duty_factor is only adjusted here as a last resort.
+    duty_factor is NEVER varied — it is fixed from initial_params throughout.
 
-    Early stopping: if the best COT improves < 1% over 50 consecutive trials
-    in either phase, that phase terminates early.
+    Outer loop (restart loop):
+        Phase 1 — Shape parameters only, freq fixed:
+            Uses the full n_calls budget to explore the 12-D shape space.
+        Phase 2 — Frequency only, shape fixed at phase 1 best:
+            Uses a smaller budget (20% of n_calls) to search for a better freq.
+        If phase 2 finds a strictly better freq (lower COT), the current best
+        params are updated with the new freq and phase 1 restarts.
+        The loop exits when phase 2 fails to improve.
 
-    All trials are logged to a CSV file.
+    Early stopping: if best COT improves < 1% over 50 consecutive trials
+    the current phase terminates early.
+
+    All trials are logged to CSV.
     """
     from skopt import gp_minimize
     from skopt.callbacks import EarlyStopper
 
+    # ── Fixed duty_factor — never changes ─────────────────────────────────────
+    duty_factor = initial_params["duty_factor"]
+
     # ── Budget split ──────────────────────────────────────────────────────────
-    # Phase 2 needs at least 10 calls to fit a GP; give phase 1 the rest.
     phase2_budget = max(10, int(n_calls * 0.2))
-    phase1_budget = max(10, n_calls - phase2_budget)
+    phase1_budget = max(10, n_calls)  # phase 1 always gets full n_calls budget
 
     # ── CSV setup ─────────────────────────────────────────────────────────────
     csv_file = open(output_path, "w", newline="")
     writer = csv.writer(csv_file)
-    writer.writerow(["phase", "trial", "cot"] + ALL_KEYS)
-    trial_counter = [0]  # mutable counter shared across phases
+    writer.writerow(["restart", "phase", "trial", "cot"] + ALL_KEYS)
+    trial_counter = [0]  # global trial counter across all restarts
 
-    print(f"═══ WALK Gait COT Bayesian Optimisation ═══")
-    print(f"  Total budget : {n_calls}  (phase 1: {phase1_budget}, phase 2: {phase2_budget})")
+    print(f"═══ {gait.name} Gait COT Bayesian Optimisation ═══")
+    print(f"  duty_factor  : {duty_factor} (fixed)")
+    print(f"  Phase 1 budget per restart : {phase1_budget}")
+    print(f"  Phase 2 budget per restart : {phase2_budget}")
     print(f"  Output       : {output_path}")
     print()
 
     # ── Early stopping callback ───────────────────────────────────────────────
-    # Stops if the best COT improves < 1% over the last 50 evaluations.
     class ConvergenceStopper(EarlyStopper):
-        def __init__(self, window: int = 50, tol: float = 0.01):
+        """Stops if best COT improves < tol fraction over the last `window` evals.
+        Requires at least `min_successes` non-penalty evaluations before it can
+        fire — prevents premature termination when the failure rate is very high
+        and all recent func_vals are PENALTY_COT.
+        Window=200 and tol=0.005 are intentionally lenient — we want the GP to
+        exhaust a large neighbourhood before declaring convergence.
+        """
+        def __init__(self, window: int = 200, tol: float = 0.005, min_successes: int = 30):
             super().__init__()
             self.window = window
             self.tol = tol
+            self.min_successes = min_successes
 
         def _criterion(self, result):
-            if len(result.func_vals) < self.window:
-                return False
-            recent = result.func_vals[-self.window:]
             import numpy as _np
+            vals = _np.array(result.func_vals)
+            # Don't stop until we have enough successful (non-penalty) evaluations
+            n_success = _np.sum(vals < PENALTY_COT)
+            if n_success < self.min_successes:
+                return False
+            if len(vals) < self.window:
+                return False
+            recent = vals[-self.window:]
             best_recent = _np.min(recent)
-            best_before = _np.min(result.func_vals[:-self.window]) if len(result.func_vals) > self.window else best_recent
-            # Stop if improvement over the window is < tol fraction
+            best_before = _np.min(vals[:-self.window]) if len(vals) > self.window else best_recent
             if best_before <= 0:
                 return False
             improvement = (best_before - best_recent) / abs(best_before)
             return improvement < self.tol
 
-    stopper = ConvergenceStopper(window=50, tol=0.01)
+    # ── Outer restart loop ────────────────────────────────────────────────────
+    current_params = {k: initial_params[k] for k in ALL_KEYS}  # freq + shape (no duty_factor)
+    global_best_cot = PENALTY_COT
+    restart_idx = 0
 
-    # ── Phase 1: shape params only, freq and duty_factor fixed at defaults ─────
-    print(f"── Phase 1: Optimising 12 shape parameters (freq = {DEFAULTS['freq']} Hz, duty = {DEFAULTS['duty_factor']}) ──")
-    shape_bounds = _make_bounds(SHAPE_KEYS)
-    best_cot_so_far = [PENALTY_COT]
-    fail_count = [0]
-    success_count = [0]
+    while True:
+        restart_idx += 1
+        fail_count = [0]
+        success_count = [0]
 
-    def phase1_objective(x: list[float]) -> float:
-        trial_counter[0] += 1
-        d = {k: v for k, v in zip(SHAPE_KEYS, x)}
-        d["freq"] = DEFAULTS["freq"]              # fixed freq
-        d["duty_factor"] = DEFAULTS["duty_factor"] # fixed duty_factor
-        cot = evaluate_params(d)
-        if cot >= PENALTY_COT:
-            fail_count[0] += 1
+        # ── Phase 1: optimise shape params, freq fixed ────────────────────────
+        fixed_freq = current_params["freq"]
+        print(f"── Restart {restart_idx} | Phase 1: shape optimisation (freq = {fixed_freq:.4f} Hz, duty = {duty_factor}) ──")
+        shape_bounds = _make_bounds(SHAPE_KEYS, {**current_params, "duty_factor": duty_factor})
+        best_cot_phase1 = [PENALTY_COT]
+
+        def phase1_objective(x: list[float]) -> float:
+            trial_counter[0] += 1
+            d = {k: v for k, v in zip(SHAPE_KEYS, x)}
+            d["freq"] = fixed_freq
+            cot = evaluate_params(d, duty_factor=duty_factor, gait=gait)
+            if cot >= PENALTY_COT:
+                fail_count[0] += 1
+            else:
+                success_count[0] += 1
+            if cot < best_cot_phase1[0]:
+                best_cot_phase1[0] = cot
+            writer.writerow([restart_idx, 1, trial_counter[0], f"{cot:.6f}"] + [f"{d.get(k, fixed_freq):.6f}" for k in ALL_KEYS])
+            csv_file.flush()
+            if trial_counter[0] % 50 == 0:
+                print(f"  [R{restart_idx} P1] trial {trial_counter[0]:>4d}  |  best COT = {best_cot_phase1[0]:.4f}  |  ok={success_count[0]} fail={fail_count[0]}")
+            return cot
+
+        # ── Random pre-sampling: find feasible points before invoking the GP ──
+        # The GP surrogate scales as O(n³) per step. If almost all evaluations
+        # return PENALTY_COT the GP has nothing useful to learn from and each
+        # step becomes slower as n grows. We instead run pure random search
+        # until we accumulate MIN_FEASIBLE successful trials, then seed the GP
+        # with those points so it immediately has structure to exploit.
+        MIN_FEASIBLE = 20        # target feasible points before starting GP
+        MAX_RANDOM   = 600       # hard cap on random-phase trials per restart
+        import numpy as _rng_np
+        rng = _rng_np.random.default_rng(restart_idx * 17)
+
+        pre_x: list[list[float]] = []   # feasible x vectors
+        pre_y: list[float]       = []   # corresponding COT values
+        all_pre_x: list[list[float]] = [[current_params[k] for k in SHAPE_KEYS]]  # include default
+        all_pre_y: list[float]       = []
+
+        # Always evaluate the current best point first
+        _d0 = {k: current_params[k] for k in SHAPE_KEYS}
+        _d0["freq"] = fixed_freq
+        _cot0 = phase1_objective([current_params[k] for k in SHAPE_KEYS])
+        all_pre_y.append(_cot0)
+        if _cot0 < PENALTY_COT:
+            pre_x.append([current_params[k] for k in SHAPE_KEYS])
+            pre_y.append(_cot0)
+
+        random_trials_used = 1
+        while len(pre_x) < MIN_FEASIBLE and random_trials_used < MAX_RANDOM and trial_counter[0] < phase1_budget:
+            # Sample uniformly within bounds
+            x_rand = [rng.uniform(lo, hi) for lo, hi in shape_bounds]
+            cot_rand = phase1_objective(x_rand)
+            all_pre_x.append(x_rand)
+            all_pre_y.append(cot_rand)
+            if cot_rand < PENALTY_COT:
+                pre_x.append(x_rand)
+                pre_y.append(cot_rand)
+            random_trials_used += 1
+
+        print(f"  Pre-sampling done: {random_trials_used} random trials, {len(pre_x)} feasible found.")
+
+        # Remaining budget for the GP phase
+        gp_budget = phase1_budget - trial_counter[0]
+
+        if gp_budget < 10:
+            # Budget exhausted in random phase — use whatever we found
+            print("  Budget exhausted in random pre-sampling phase.")
+            if pre_y:
+                best_idx = int(_rng_np.argmin(pre_y))
+                phase1_best_shape = {k: v for k, v in zip(SHAPE_KEYS, pre_x[best_idx])}
+                phase1_best_cot = pre_y[best_idx]
+            else:
+                phase1_best_shape = {k: current_params[k] for k in SHAPE_KEYS}
+                phase1_best_cot = PENALTY_COT
         else:
-            success_count[0] += 1
-        if cot < best_cot_so_far[0]:
-            best_cot_so_far[0] = cot
-        # Log to CSV
-        writer.writerow([1, trial_counter[0], f"{cot:.6f}"] + [f"{d[k]:.6f}" for k in ALL_KEYS])
-        csv_file.flush()
-        # Progress report every 50 trials
-        if trial_counter[0] % 50 == 0:
-            print(f"  [Phase 1] trial {trial_counter[0]:>4d}/{phase1_budget}  |  best COT = {best_cot_so_far[0]:.4f}  |  ok={success_count[0]} fail={fail_count[0]}")
-        return cot
+            # Seed the GP with ONLY feasible points — passing hundreds of identical
+            # PENALTY_COT values gives the GP nothing to learn from and makes each
+            # kernel fit O(n³) slow.  With only feasible points the GP is small,
+            # fast, and has real structure to exploit.
+            if not pre_x:
+                # No feasible points found at all — fall back to defaults
+                print("  WARNING: no feasible points found. Using default params.")
+                phase1_best_shape = {k: current_params[k] for k in SHAPE_KEYS}
+                phase1_best_cot = PENALTY_COT
+            else:
+                result1 = gp_minimize(
+                    phase1_objective,
+                    shape_bounds,
+                    n_calls=gp_budget,
+                    n_initial_points=0,      # 0 = skip GP's own random phase; we supply x0/y0
+                    x0=pre_x,               # feasible points only — keeps GP small and fast
+                    y0=pre_y,
+                    acq_func="EI",
+                    random_state=restart_idx * 17,
+                    callback=[ConvergenceStopper(window=200, tol=0.005, min_successes=30)],
+                    verbose=False,
+                )
+                phase1_best_shape = {k: v for k, v in zip(SHAPE_KEYS, result1.x)}
+                phase1_best_cot = result1.fun
 
-    # n_initial_points must be strictly less than n_calls for gp_minimize
-    # Seed with default params so the GP starts from a known-good point,
-    # then 15 random samples to explore, rest is GP-guided.
-    n_initial = min(15, phase1_budget - 2)
-    x0_phase1 = [DEFAULTS[k] for k in SHAPE_KEYS]
-    result1 = gp_minimize(
-        phase1_objective,
-        shape_bounds,
-        n_calls=phase1_budget,
-        n_initial_points=n_initial,
-        x0=x0_phase1,
-        random_state=42,
-        callback=[stopper],
-        verbose=False,
-    )
+        if phase1_best_cot < global_best_cot:
+            global_best_cot = phase1_best_cot
 
-    # Extract phase 1 best as a dict
-    phase1_best = {k: v for k, v in zip(SHAPE_KEYS, result1.x)}
-    phase1_best["freq"] = DEFAULTS["freq"]
-    phase1_best["duty_factor"] = DEFAULTS["duty_factor"]
-    phase1_best_cot = result1.fun
+        print(f"\n  Phase 1 complete — best COT = {phase1_best_cot:.4f}  (ok={success_count[0]}, fail={fail_count[0]})")
+        print(f"  Trials used: {trial_counter[0]} / {phase1_budget}")
+        print()
 
-    print(f"\n  Phase 1 complete — best COT = {phase1_best_cot:.4f}  (ok={success_count[0]}, fail={fail_count[0]})")
-    print(f"  Trials used: {len(result1.func_vals)} / {phase1_budget}")
-    print()
+        # Reset counters for phase 2
+        fail_count[0] = 0
+        success_count[0] = 0
 
-    # Reset counters for phase 2
-    fail_count[0] = 0
-    success_count[0] = 0
+        # ── Phase 2: freq search only, shape fixed at phase 1 best ───────────
+        print(f"── Restart {restart_idx} | Phase 2: frequency search (shape fixed) ──")
+        # Frequency bounds: ±15% around current freq, clamped to [0.5, 4.0]
+        freq_lo = max(0.5, fixed_freq * 0.85)
+        freq_hi = min(4.0, fixed_freq * 1.15)
+        freq_bounds = [(freq_lo, freq_hi)]
+        best_cot_phase2 = [phase1_best_cot]  # phase 2 must beat phase 1 to trigger a restart
 
-    # ── Phase 2: all 14 params (freq + duty_factor + shape), seeded around phase 1 best ──
-    print("── Phase 2: Optimising 14 parameters (freq + duty_factor + shape) ──")
-    # Freq bounds: ±15% around default, clamped to [0.5, 3.0]
-    freq_bounds = [(max(0.5, DEFAULTS["freq"] * 0.85), min(3.0, DEFAULTS["freq"] * 1.15))]
-    # Duty factor bounds: ±15% around default, clamped to [0.1, 0.8]
-    duty_lo = max(0.1, DEFAULTS["duty_factor"] * 0.85)
-    duty_hi = min(0.8, DEFAULTS["duty_factor"] * 1.15)
-    duty_bounds = [(duty_lo, duty_hi)]
-    all_bounds = freq_bounds + duty_bounds + _make_bounds(SHAPE_KEYS)
+        def phase2_objective(x: list[float]) -> float:
+            trial_counter[0] += 1
+            trial_freq = x[0]
+            d = {**phase1_best_shape, "freq": trial_freq}
+            cot = evaluate_params(d, duty_factor=duty_factor, gait=gait)
+            if cot >= PENALTY_COT:
+                fail_count[0] += 1
+            else:
+                success_count[0] += 1
+            if cot < best_cot_phase2[0]:
+                best_cot_phase2[0] = cot
+            writer.writerow([restart_idx, 2, trial_counter[0], f"{cot:.6f}"] + [f"{d[k]:.6f}" for k in ALL_KEYS])
+            csv_file.flush()
+            if trial_counter[0] % 10 == 0:
+                print(f"  [R{restart_idx} P2] trial {trial_counter[0]:>4d}  |  best COT = {best_cot_phase2[0]:.4f}  |  ok={success_count[0]} fail={fail_count[0]}")
+            return cot
 
-    # Starting point from phase 1 best
-    x0 = [phase1_best[k] for k in ALL_KEYS]
+        # Phase 2 is 1-D so fewer initial points needed, but still vary the seed.
+        n_initial2 = max(10, min(int(phase2_budget * 0.40), phase2_budget - 1))
+        result2 = gp_minimize(
+            phase2_objective,
+            freq_bounds,
+            n_calls=phase2_budget,
+            n_initial_points=n_initial2,
+            x0=[fixed_freq],
+            acq_func="EI",
+            random_state=restart_idx * 31,  # vary per restart
+            callback=[ConvergenceStopper(window=60, tol=0.005, min_successes=10)],
+            verbose=False,
+        )
 
-    def phase2_objective(x: list[float]) -> float:
-        trial_counter[0] += 1
-        d = {k: v for k, v in zip(ALL_KEYS, x)}
-        cot = evaluate_params(d)
-        if cot >= PENALTY_COT:
-            fail_count[0] += 1
+        phase2_best_freq = result2.x[0]
+        phase2_best_cot  = result2.fun
+
+        print(f"\n  Phase 2 complete — best COT = {phase2_best_cot:.4f}  new freq = {phase2_best_freq:.4f} Hz  (ok={success_count[0]}, fail={fail_count[0]})")
+        print(f"  Trials used (phase 2): {len(result2.func_vals)} / {phase2_budget}")
+        print()
+
+        # ── Decide whether to restart ─────────────────────────────────────────
+        if phase2_best_cot < phase1_best_cot:
+            # Phase 2 found a strictly better frequency — restart phase 1 with it
+            print(f"  ★ New best freq = {phase2_best_freq:.4f} Hz (COT {phase2_best_cot:.4f} < {phase1_best_cot:.4f}). Restarting phase 1.")
+            current_params = {**phase1_best_shape, "freq": phase2_best_freq}
+            global_best_cot = phase2_best_cot
         else:
-            success_count[0] += 1
-        if cot < best_cot_so_far[0]:
-            best_cot_so_far[0] = cot
-        writer.writerow([2, trial_counter[0], f"{cot:.6f}"] + [f"{d[k]:.6f}" for k in ALL_KEYS])
-        csv_file.flush()
-        if trial_counter[0] % 50 == 0:
-            print(f"  [Phase 2] trial {trial_counter[0]:>4d}  |  best COT = {best_cot_so_far[0]:.4f}  |  ok={success_count[0]} fail={fail_count[0]}")
-        return cot
-
-    # n_initial_points must be strictly less than n_calls for gp_minimize
-    n_initial2 = min(10, phase2_budget - 1)
-    result2 = gp_minimize(
-        phase2_objective,
-        all_bounds,
-        n_calls=phase2_budget,
-        n_initial_points=n_initial2,
-        x0=x0,
-        random_state=42,
-        callback=[stopper],
-        verbose=False,
-    )
-
-    phase2_best = {k: v for k, v in zip(ALL_KEYS, result2.x)}
-    phase2_best_cot = result2.fun
-
-    print(f"\n  Phase 2 complete — best COT = {phase2_best_cot:.4f}  (ok={success_count[0]}, fail={fail_count[0]})")
-    print(f"  Trials used: {len(result2.func_vals)} / {phase2_budget}")
+            # No improvement — converged
+            print(f"  Phase 2 found no better frequency. Converged after {restart_idx} restart(s).")
+            # Overall best is phase 1 best (phase 2 did not beat it)
+            current_params = {**phase1_best_shape, "freq": fixed_freq}
+            global_best_cot = phase1_best_cot
+            break
 
     csv_file.close()
-
-    # ── Pick overall best ─────────────────────────────────────────────────────
-    if phase2_best_cot <= phase1_best_cot:
-        best = phase2_best
-        best_cot = phase2_best_cot
-        best_phase = 2
-    else:
-        best = phase1_best
-        best_cot = phase1_best_cot
-        best_phase = 1
 
     # ── Final report ──────────────────────────────────────────────────────────
     print()
     print("═══════════════════════════════════════════════════════════════")
-    print(f"  BEST COT = {best_cot:.6f}  (from phase {best_phase})")
+    print(f"  BEST COT = {global_best_cot:.6f}")
+    print(f"  duty_factor = {duty_factor}  (unchanged)")
     print("═══════════════════════════════════════════════════════════════")
     print()
     print("Optimal parameters:")
     for k in ALL_KEYS:
-        print(f"  --{k:<20s} {best[k]:.6f}")
+        print(f"  --{k:<20s} {current_params[k]:.6f}")
+    print(f"  --{'duty_factor':<20s} {duty_factor:.6f}")
     print()
     # Copy-pasteable CLI command
-    cli_args = " ".join(f"--{k} {best[k]:.6f}" for k in ALL_KEYS)
+    cli_args = " ".join(f"--{k} {current_params[k]:.6f}" for k in ALL_KEYS)
+    cli_args += f" --duty_factor {duty_factor:.6f}"
     print(f"Re-run with:\n  python ai_fix_param.py {cli_args}")
     print()
     print(f"Full results saved to: {output_path}")
@@ -400,14 +582,24 @@ def run_sweep(n_calls: int, output_path: str) -> None:
 def main():
     args = parse_args()
 
+    # Resolve gait enum — fall back to WALK if unrecognised
+    try:
+        gait_enum = Gait[args.gait.upper()]
+    except KeyError:
+        print(f"Warning: unknown gait '{args.gait}', falling back to WALK.")
+        gait_enum = Gait.WALK
+
     if args.sweep:
+        # Build initial params dict from CLI args (which may be gait defaults if no args given)
+        initial_params: dict[str, float] = {k: getattr(args, k) for k in ALL_KEYS}
+        initial_params["duty_factor"] = args.duty_factor  # carry duty_factor for sim, not for sweep
+
         output = args.output or f"sweep_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        run_sweep(n_calls=args.n_calls, output_path=output)
+        run_sweep(n_calls=args.n_calls, output_path=output, initial_params=initial_params, gait=gait_enum)
     else:
-        cot = elip_traj_test()
+        cot = elip_traj_test(gait_enum)
         print("Cost of Transport:", cot)
-    
-    
+
 
 if __name__ == "__main__":
     main()
