@@ -385,6 +385,23 @@ def print_results(
         val = best_params.get(key, 0.0)
         print(f"    {key:<20s} = {val:.6f}")
 
+    # ── Copy-pasteable EllipsoidConfig for code insertion ────────────────────
+    print("-" * 72)
+    print("  EllipsoidConfig (copy into code):")
+    print("        EllipsoidConfig(")
+    front_keys = [k for k in SHAPE_KEYS if k.startswith("front_")]
+    rear_keys = [k for k in SHAPE_KEYS if k.startswith("rear_")]
+    for key in front_keys:
+        val = best_params.get(key, 0.0)
+        print(f"            {key:<20s}= {val:.6f},")
+    print()
+    for key in rear_keys:
+        val = best_params.get(key, 0.0)
+        print(f"            {key:<20s}= {val:.6f},")
+    print("        )")
+    print(f"  freq = {best_params.get('freq', 0.0):.6f}")
+    print(f"  duty_factor = {best_params.get('duty_factor', 0.0):.6f}")
+
     # ── Copy-pasteable command for ai_fix_param.py ───────────────────────────
     param_args = " ".join(
         f"--{key} {best_params.get(key, 0.0):.6f}" for key in ALL_PARAM_KEYS
