@@ -87,7 +87,7 @@ def default_params(gait: Gait) -> dict[str, float]:
             "rear_rotation": -0.05, "rear_skew": 0.00,
         },
         Gait.CANTER: {
-            "freq": 3.50, "duty_factor": 0.31,
+            "freq": 2.30, "duty_factor": 0.31,
             "front_x_fore": 0.14, "front_x_hind": 0.07,
             "front_z_top": 0.12, "front_z_bottom": 0.02,
             "front_rotation": 0.10, "front_skew": 0.02,
