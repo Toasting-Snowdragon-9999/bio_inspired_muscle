@@ -56,6 +56,8 @@ Only the files listed below are current. Files prefixed with `(old)` are legacy 
 | `test_inv_sim.py` | IK integration test |
 | `mujoco_manual_control.py` | Manual joint control for debugging |
 | `mujoco_test.py` | Basic simulation test |
+| `gait_env.py` | Gymnasium environment for RL-based gait parameter optimization |
+| `reinforcement_learning.py` | RL training script (PPO + CMA-ES) for gait parameter tuning |
 
 ### shared_module/
 | File | Description |
@@ -106,6 +108,28 @@ Key papers:
 
 ### Upcoming
 - Fuzzy logic layer for gait transition and terrain adaptation (papers to be added to `Docs/fuzzy_logic_related/`)
+
+### Reinforcement Learning — Gait Parameter Optimizer
+
+`python/sim/reinforcement_learning.py` uses RL to find optimal gait parameters (frequency, duty factor, and 12 trajectory shape parameters).
+
+**Algorithms:** PPO (stable-baselines3) and CMA-ES.
+
+**Reward:** Multi-component — penalises COT and body tilt, rewards forward velocity, large penalty for falling.
+
+```bash
+# CMA-ES optimisation (200 generations, TROT gait)
+cd python/sim
+python reinforcement_learning.py --algo cma --gait TROT --n-generations 200
+
+# PPO training (500 episodes)
+python reinforcement_learning.py --algo ppo --gait TROT --total-timesteps 500
+
+# Custom reward weights
+python reinforcement_learning.py --algo cma --w-cot 1.5 --w-vel 0.3 --w-tilt 3.0
+```
+
+Results are saved to CSV and best parameters are printed as a copy-pasteable `ai_fix_param.py` command.
 
 ---
 
