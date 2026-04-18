@@ -606,6 +606,97 @@ class MujocoSim:
 
         return self.compute_CoT()
 
+    def headless_sim_extended(self, controller=None, sim_length: float = 10.0,
+                              warmup: float = 2.0) -> dict:
+        """
+        Run headless simulation and return extended metrics for RL training.
+
+        Same warmup → measurement loop as headless_sim(), but also tracks
+        forward velocity, average body tilt (roll + pitch), and survival.
+
+        Returns:
+            dict with keys:
+                cot       — Cost of Transport (float or None if robot didn't move)
+                distance  — forward distance travelled during measurement (m)
+                velocity  — average forward velocity during measurement (m/s)
+                avg_tilt  — mean(|roll| + |pitch|) during measurement (rad)
+                survived  — True if body stayed above 0.15 m throughout
+        """
+        if sim_length <= 0:
+            raise ValueError("sim_length must be positive for headless_sim_extended.")
+
+        # Reset simulation
+        mj.mj_resetData(self.model, self.data)
+        mj.mj_forward(self.model, self.data)
+
+        if controller is not None and hasattr(controller, 'reset'):
+            controller.reset()
+
+        self.robot_interface.dt = self.model.opt.timestep
+
+        # Control callback
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            if self.use_direct:
+                self._apply_controller_targets_directly()
+            else:
+                self._apply_controller_targets_torque()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        # ── Warmup phase ──
+        warmup_end = self.data.time + warmup
+        while self.data.time < warmup_end:
+            mj.mj_step(self.model, self.data)
+
+        # ── Measurement phase ──
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
+        tilt_sum = 0.0
+        step_count = 0
+        survived = True
+        min_height = 0.15  # body z threshold for "fell over"
+
+        measure_end = self.data.time + sim_length
+        while self.data.time < measure_end:
+            mj.mj_step(self.model, self.data)
+            self._accumulate_energy()
+
+            # Body tilt from rotation matrix
+            xmat = self.data.body("base_link").xmat.reshape(3, 3)
+            # Roll  = atan2(R[2,1], R[2,2])
+            roll = np.arctan2(xmat[2, 1], xmat[2, 2])
+            # Pitch = -asin(clamp(R[2,0], -1, 1))
+            pitch = -np.arcsin(np.clip(xmat[2, 0], -1.0, 1.0))
+            tilt_sum += abs(roll) + abs(pitch)
+            step_count += 1
+
+            # Survival check
+            body_z = self.data.body("base_link").xpos[2]
+            if body_z < min_height:
+                survived = False
+
+        mj.set_mjcb_control(None)
+
+        # Compute metrics
+        cot = self.compute_CoT()
+        current_x = self.data.qpos[0]
+        distance = current_x - self._start_x if self._start_x is not None else 0.0
+        velocity = distance / sim_length if sim_length > 0 else 0.0
+        avg_tilt = tilt_sum / step_count if step_count > 0 else 0.0
+
+        return {
+            "cot": cot,
+            "distance": distance,
+            "velocity": velocity,
+            "avg_tilt": avg_tilt,
+            "survived": survived,
+        }
+
     def keyboard(self, window, key, scancode, act, mods):
         # Handle built-in keyboard commands
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
