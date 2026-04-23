@@ -55,3 +55,8 @@ python/sim/__pycache__/*
 python/plotting/__pycache__/*
 python/cpg/__pycache__/*
 python/pd/__pycache__/*
+python/controllers/__pycache__/*
+python/inverse_kinematics/__pycache__/*
+python/shared_module/__pycache__/*
+
+!python/sim/go2/assets/*

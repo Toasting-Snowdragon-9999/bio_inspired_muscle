@@ -1,28 +1,76 @@
-from xml.parsers.expat import model
+from pyexpat import model
+import os, sys
+import time
+from math import floor
+import numpy as np
 import mujoco as mj 
 from mujoco.glfw import glfw
-import numpy as np
-import os
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from shared_module.global_constants import (
+    LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
+    ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
+    SENSOR_VEL_DICT, ACTUATOR_DICT, NEURON_TO_FOOT_DICT
+)
+from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh
 
 class MujocoSim:
-    def __init__(self, model_path, window_width=1200, window_height=900, print_camera_config=0):
+    def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 60.0):
         self.model = mj.MjModel.from_xml_path(model_path)
         self.data = mj.MjData(self.model)
+        self.robot_interface = robot_interface
         self.print_camera_config = print_camera_config
-        self.window_width = window_width
-        self.window_height = window_height
-        
+        self.render_hz = render_hz   # target render frequency; lower on slow PCs (e.g. 30.0)
+        self.window_width = floor(1920 * window_scale)
+        self.window_height = floor(1080 * window_scale)
         # Mouse interaction state
         self.button_left = False
         self.button_middle = False
         self.button_right = False
         self.lastx = 0
         self.lasty = 0
-        
+        self.height = 0.0
+        self.use_direct = False
+        self.follow_robot = True
+
         # Will be set during init_graphics
         self.cam = None
         self.scene = None
+        
+        # Controller keyboard callback
+        self.controller_keyboard_callback = None
+
+        # Oscillator figure overlays
+        self.fig_hip = None
+        self.fig_knee = None
+        self.fig_joints = None
+        self.slide_joints = None
+        self._joint_fig_pnt = 0
+        self._joint_history = 300
+        self._joint_indices = None
+        self._fig_pnt = 0          # ring-buffer write index
+        self._fig_controller = None
+        self.dispense_in_air = False
+        self.enabled_graph = False
+        self.enabled_joint_graph = False
+        self.enabled_joint_sliders = False
+
+        # for computing CoT
+        self._energy = 0.0
+        self._start_x = None
+        self._robot_mass = None
+        self.use_bias_compensation = True
+
+    def get_model_and_data(self):
+        return self.model, self.data
+
+    def use_direct_control(self):
+        self.use_direct = True
+    
+    def set_camera_follow(self, enabled: bool):
+        """Enable or disable camera following the robot."""
+        self.follow_robot = bool(enabled)
 
     def init_graphics(self):
         """Initialize GLFW window and visualization structures."""
@@ -32,8 +80,12 @@ class MujocoSim:
         glfw.swap_interval(1)
 
         self.cam = mj.MjvCamera()
+
         opt = mj.MjvOption()
         mj.mjv_defaultCamera(self.cam)
+        self.cam.azimuth=90
+        self.cam.elevation=0.5 
+        self.cam.distance=4
         mj.mjv_defaultOption(opt)
         
         self.scene = mj.MjvScene(self.model, maxgeom=10000)
@@ -44,11 +96,189 @@ class MujocoSim:
         glfw.set_cursor_pos_callback(window, self.mouse_move)
         glfw.set_mouse_button_callback(window, self.mouse_button)
         glfw.set_scroll_callback(window, self.scroll)
+        glfw.focus_window(window)
 
         return window, self.cam, opt, self.scene, context
 
+    # ── Oscillator figure overlay ───────────────────────────────────
+    _FIG_HISTORY = 300          # number of data points shown (≈5 s at 60 fps)
+    _LEG_COLORS = [             # FL=blue, FR=red, RR=green, RL=magenta
+        (0.2, 0.4, 1.0),
+        (1.0, 0.2, 0.2),
+        (0.2, 0.8, 0.2),
+        (0.8, 0.2, 0.8),
+    ]
+
+    def _init_figures(self):
+        """Create two mjvFigure objects for hip / knee oscillator output."""
+        labels = LEG_LABELS
+
+        for attr, title in [('fig_hip', 'Hip oscillators'), ('fig_knee', 'Knee oscillators')]:
+            fig = mj.MjvFigure()
+            mj.mjv_defaultFigure(fig)
+            fig.title = title
+            fig.xlabel = 'Time'
+            fig.flg_extend = 0       # fixed x-range, we scroll manually
+            fig.range[0] = [0, self._FIG_HISTORY]  # x range
+            fig.range[1] = [-1.2, 1.2]             # y range
+            fig.gridsize = [5, 5]
+
+            for i in range(4):
+                fig.linergb[i] = list(self._LEG_COLORS[i])
+                fig.linename[i] = labels[i]
+                # initialise flat data
+                for k in range(self._FIG_HISTORY):
+                    fig.linedata[i][2 * k] = float(k)
+                    fig.linedata[i][2 * k + 1] = 0.0
+                fig.linepnt[i] = self._FIG_HISTORY
+
+            setattr(self, attr, fig)
+
+        self._fig_pnt = 0
+    
+    def _init_joint_figures(self):
+        """Create figure for joint position visualization."""
+        fig = mj.MjvFigure()
+        mj.mjv_defaultFigure(fig)
+
+        fig.title = "Joint Positions"
+        fig.xlabel = "Time"
+        fig.range[0] = [0, self._joint_history]
+        fig.range[1] = [-2.5, 2.5]   # adjust for your joint limits
+        fig.gridsize = [5, 5]
+
+        # Get joint indices (exclude root free joint)
+        self._joint_indices = []
+        for i in range(self.model.njnt):
+            name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, i)
+            if name is not None and self.model.jnt_type[i] != mj.mjtJoint.mjJNT_FREE:
+                self._joint_indices.append(i)
+
+        # Setup lines
+        for i, j_id in enumerate(self._joint_indices):
+            fig.linergb[i] = [np.random.rand(), np.random.rand(), np.random.rand()]
+            fig.linename[i] = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_JOINT, j_id)
+
+            for k in range(self._joint_history):
+                fig.linedata[i][2*k] = float(k)
+                fig.linedata[i][2*k+1] = 0.0
+
+            fig.linepnt[i] = self._joint_history
+
+        self.fig_joints = fig
+        self._joint_fig_pnt = 0
+    
+    def _init_joint_sliders(self):
+        self.slide_joints = []
+        self._joint_names = []
+        self._joint_ranges = []
+
+        # Exact joint order based on SENSOR_POS_DICT
+        joint_order = list(SENSOR_POS_DICT.keys())
+
+        for name in joint_order:
+            self._joint_names.append(name)
+
+            if "calf" in name:
+                self._joint_ranges.append(KNEE_POS_RANGE)
+            elif "thigh" in name:
+                if "front" in name:
+                    self._joint_ranges.append(FRONT_HIP_POS_RANGE)
+                else:
+                    self._joint_ranges.append(BACK_HIP_POS_RANGE)
+            elif "hip" in name:
+                self._joint_ranges.append(ABDUCTION_POS_RANGE)
+
+        for i, name in enumerate(self._joint_names):
+            fig = mj.MjvFigure()
+            mj.mjv_defaultFigure(fig)
+
+            fig.title = str(name)
+            fig.xlabel = ""
+            fig.range[0] = [0, 1]
+            fig.range[1] = list(self._joint_ranges[i])
+            fig.gridsize = [2, 5]
+
+            fig.linergb[0] = [0.2, 0.7, 0.9]
+            fig.linepnt[0] = 2
+
+            # initialize at midpoint
+            mid = np.mean(self._joint_ranges[i])
+
+            fig.linedata[0][0] = 0.5
+            fig.linedata[0][1] = self._joint_ranges[i][0]
+
+            fig.linedata[0][2] = 0.5
+            fig.linedata[0][3] = mid
+
+            self.slide_joints.append(fig)
+
+    def _update_figures(self):
+        """Push latest oscillator outputs into the figure ring buffers."""
+        if self._fig_controller is None or self.fig_hip is None:
+            return
+        if not hasattr(self._fig_controller, 'get_oscillator_outputs'):
+            return
+
+        hip_out, knee_out = self._fig_controller.get_oscillator_outputs()
+
+        idx = self._fig_pnt % self._FIG_HISTORY
+        for i in range(4):
+            # shift all data left by one
+            for k in range(self._FIG_HISTORY - 1):
+                self.fig_hip.linedata[i][2 * k + 1] = self.fig_hip.linedata[i][2 * (k + 1) + 1]
+                self.fig_knee.linedata[i][2 * k + 1] = self.fig_knee.linedata[i][2 * (k + 1) + 1]
+            # write newest sample at the end
+            self.fig_hip.linedata[i][2 * (self._FIG_HISTORY - 1) + 1] = float(hip_out[i])
+            self.fig_knee.linedata[i][2 * (self._FIG_HISTORY - 1) + 1] = float(knee_out[i])
+
+        self._fig_pnt += 1
+
+    def _update_joint_figures(self):
+        if self.fig_joints is None:
+            return
+
+        for line_i, j_id in enumerate(self._joint_indices):
+            # Read joint angle directly from qpos using MuJoCo's qposadr
+            addr = self.model.jnt_qposadr[j_id]
+            value = self.data.qpos[addr]
+
+            # shift left
+            for k in range(self._joint_history - 1):
+                self.fig_joints.linedata[line_i][2*k+1] = \
+                    self.fig_joints.linedata[line_i][2*(k+1)+1]
+
+            # write newest sample
+            self.fig_joints.linedata[line_i][2*(self._joint_history-1)+1] = float(value)
+
+        self._joint_fig_pnt += 1
+    
+    def _update_joint_sliders(self):
+        if self.slide_joints is None:
+            return
+
+        sens = self.data.sensordata
+
+        for i, name in enumerate(self._joint_names):
+            sensor_idx = SENSOR_POS_DICT[name]
+            joint_val = sens[sensor_idx]
+
+            fig = self.slide_joints[i]
+
+            # bottom = joint min
+            fig.linedata[0][0] = 0.5
+            fig.linedata[0][1] = self._joint_ranges[i][0]
+
+            # top = current theta
+            fig.linedata[0][2] = 0.5
+            fig.linedata[0][3] = joint_val
+
     def simulation_step(self, window, model, data, opt, scene, cam, context):
         """Perform one simulation step and render."""
+        if self.follow_robot:
+            base_pos = data.body("base_link").xpos
+            cam.lookat[:] = base_pos
+
         viewport_width, viewport_height = glfw.get_framebuffer_size(window)
         viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
 
@@ -59,44 +289,423 @@ class MujocoSim:
         mj.mjv_updateScene(model, data, opt, None, cam, mj.mjtCatBit.mjCAT_ALL.value, scene)
         mj.mjr_render(viewport, scene, context)
 
+        # ── Render oscillator figure overlays ──────────────────────
+        if self.enabled_graph:
+            self._update_figures()
+            fig_w = viewport_width // 3
+            fig_h = viewport_height // 4
+            # Hip plot: bottom-right
+            hip_rect = mj.MjrRect(viewport_width - fig_w, 0, fig_w, fig_h)
+            mj.mjr_figure(hip_rect, self.fig_hip, context)
+            # Knee plot: above the hip plot
+            knee_rect = mj.MjrRect(viewport_width - fig_w, fig_h, fig_w, fig_h)
+            mj.mjr_figure(knee_rect, self.fig_knee, context)
+        
+        if self.enabled_joint_graph:
+            self._update_joint_figures()
+
+            fig_w = viewport_width // 3
+            fig_h = viewport_height // 4
+
+            joint_rect = mj.MjrRect(0, 0, fig_w, fig_h)
+            mj.mjr_figure(joint_rect, self.fig_joints, context)
+        
+        elif self.enabled_joint_sliders:
+            self._update_joint_sliders()
+
+            cols = 4
+            slider_w = viewport_width // 10
+            slider_h = viewport_height // 4
+
+            for i, fig in enumerate(self.slide_joints):
+                col = i % cols
+                row = i // cols
+
+                x = col * slider_w
+                y = viewport_height - (row + 1) * slider_h
+
+                rect = mj.MjrRect(x, y, slider_w, slider_h)
+                mj.mjr_figure(rect, fig, context)
+
+
         glfw.swap_buffers(window)
         glfw.poll_events()
 
-    def sim(self, controller=None, sim_length=-1):
+    # ── Robot-interface synchronisation ──────────────────────────
+
+    def _sync_robot_interface(self):
+        """Copy MuJoCo sensor data → RobotInterface so controllers see fresh state."""
+        ri = self.robot_interface
+        ri.dt = self.model.opt.timestep
+
+        # QPOS_DICT = {}
+        # for joint in Joint:
+        #     joint_name = (
+        #         joint.name
+        #         .replace('HIP', 'hip_joint')
+        #         .replace('THIGH', 'thigh_joint')
+        #         .replace('CALF', 'calf_joint')
+        #     )
+
+        #     joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+        #     QPOS_DICT[joint] = self.model.jnt_qposadr[joint_id]
+
+        # pos = {
+        #     joint: float(self.data.qpos[idx])
+        #     for joint, idx in QPOS_DICT.items()
+        # }
+
+        pos = {joint: float(self.data.sensordata[idx])
+               for joint, idx in SENSOR_POS_DICT.items()}
+        
+        vel = {joint: float(self.data.sensordata[idx])
+               for joint, idx in SENSOR_VEL_DICT.items()}
+        
+        ri.joint_positions = pos
+        ri.joint_velocities = vel
+        ri.body_position = self.data.body("base_link").xpos.tolist()
+        ri.body_orientation = self.data.body("base_link").xmat.tolist()  # rotation matrix as flat list
+        ri.thigh_position = {
+            thigh: self.data.body(thigh.value).xpos.tolist()
+            for thigh in Thigh
+        }
+        ri.foot_positions = {
+            foot: self.data.body(foot.value).xpos.tolist()
+            for foot in Foot
+        }
+        ri.hip_position = {
+            hip: self.data.body(hip.value).xpos.tolist()
+            for hip in Hip
+        } 
+
+        hip_stance = {
+            hip: [pos[i] - ri.body_position[i] for i in range(3)]
+            for hip, pos in ri.hip_position.items()
+        }
+        foot_stance = {
+            foot: [pos[i] - ri.body_position[i] for i in range(3)]
+            for foot, pos in ri.foot_positions.items()
+        }
+        ri.stance_positions = {
+            foot: [
+                foot_pos[i] - hip_stance[Hip[foot.name]][i] for i in range(3)
+            ]
+            for foot, foot_pos in foot_stance.items()
+        }
+
+    def _apply_controller_targets_directly(self):
+        """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
+        targets = self.robot_interface.target_positions
+        # current_joint_pos = self.robot_interface.joint_positions
+        for joint, target_angle in targets.items():
+            joint_name = (
+                joint.name
+                .replace('HIP', 'hip_joint')
+                .replace('THIGH', 'thigh_joint')
+                .replace('CALF', 'calf_joint')
+            )
+            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+            qpos_adr = self.model.jnt_qposadr[joint_id]
+            # start_angle = current_joint_pos[joint]
+            # angle = (1 - alpha) * start_angle + alpha * target_angle
+            self.data.qpos[qpos_adr] = target_angle
+
+    def _apply_controller_targets_torque(self):
         """
-        Main simulation loop.
+        Apply torque commands from RobotInterface to MuJoCo actuators.
+        """
+
+        torques = self.robot_interface.target_torques
+
+        for joint, tau_cmd in torques.items():
+
+            joint_name = (
+                joint.name
+                .replace('HIP', 'hip_joint')
+                .replace('THIGH', 'thigh_joint')
+                .replace('CALF', 'calf_joint')
+            )
+
+            joint_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+
+            dof_adr = self.model.jnt_dofadr[joint_id]
+
+            actuator_idx = ACTUATOR_DICT[joint]
+
+            # MuJoCo bias forces (gravity + coriolis)
+            tau_bias = float(self.data.qfrc_bias[dof_adr]) if self.use_bias_compensation else 0.0
+
+            # Apply controller torque + gravity compensation
+            tau = tau_cmd + tau_bias
+
+            # Respect actuator limits
+            ctrl_min, ctrl_max = self.model.actuator_ctrlrange[actuator_idx]
+            tau = np.clip(tau, ctrl_min, ctrl_max)
+
+            # Send torque command
+            self.data.ctrl[actuator_idx] = tau
+
+    def set_bias_compensation(self, enabled: bool = True):
+        self.use_bias_compensation = bool(enabled)
+
+    def sim(self, controller=None, sim_length=-1, slow_factor=1.0, warmup: float = 2.0):
+        """
+        Main simulation loop (frame-rate independent, deterministic physics).
+
         Args:
-            controller: An object which has two methods init_controller(model, data) and control(model, data). The former is called once at the beginning of the simulation, and the latter is called at every simulation step.
-            sim_length: Duration of the simulation in seconds. If negative, runs indefinitely until window is closed.
+            controller: Object with a `run()` method.
+            sim_length: Duration in seconds (negative = infinite).
+            slow_factor: >1.0 = slow motion (visual only).
+            warmup: Sim-seconds before energy/distance tracking begins.
+                    Lets the robot settle from the initial drop so CoT
+                    is not polluted by the transient.  Default 2.0 s.
         """
         window, cam, opt, scene, context = self.init_graphics()
 
-        # Initialize and set controller
+        # --- Simulation parameters ---
+        dt = self.model.opt.timestep                # Fixed physics timestep
+        render_dt = 1.0 / self.render_hz            # Target render interval
+        accumulator = 0.0
+
+        # Set timestep for external interface
+        self.robot_interface.dt = dt
+
+        # Register controller helpers
         if controller is not None:
-            controller.init_controller(self.model, self.data)
-    
-        mj.set_mjcb_control(controller)
+            if hasattr(controller, 'keyboard_callback'):
+                self.controller_keyboard_callback = controller.keyboard_callback
+            if hasattr(controller, 'get_oscillator_outputs'):
+                self._fig_controller = controller
 
-        # Main loop
+        # --- Control callback ---
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            if self.use_direct:
+                self._apply_controller_targets_directly()
+            else:
+                self._apply_controller_targets_torque()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        # --- Init metrics ---
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        # Energy/distance tracking is deferred until after warmup
+        self._energy = 0.0
+        self._start_x = None
+        metrics_started = False
+
+        # --- Main loop ---
         while not glfw.window_should_close(window):
-            time_prev = self.data.time
+            frame_start = time.perf_counter()
 
-            # Simulate at 60 Hz
-            while (self.data.time - time_prev < 1.0 / 60.0):
+            # Amount of simulation time we want to advance this frame
+            # slow_factor > 1 → less sim-time per frame → slow motion
+            sim_time_budget = render_dt / slow_factor
+            accumulator += sim_time_budget
+
+            # --- Physics stepping (fixed dt) ---
+            while accumulator >= dt:
                 mj.mj_step(self.model, self.data)
+                # Start accumulating energy only after warmup period
+                if not metrics_started and self.data.time >= warmup:
+                    metrics_started = True
+                    self._energy = 0.0
+                    self._start_x = self.data.qpos[0]
+                if metrics_started:
+                    self._accumulate_energy()
+                accumulator -= dt
 
+            # --- Exit condition ---
             if sim_length > 0 and self.data.time >= sim_length:
                 break
 
+            # --- Rendering ---
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
 
+            if self.dispense_in_air:
+                self.enable_air_mode(self.height)
+
+            # --- Frame rate control (rendering only) ---
+            elapsed = time.perf_counter() - frame_start
+            sleep_time = render_dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+        # --- Cleanup ---
+        mj.set_mjcb_control(None)
+        glfw.destroy_window(window)
         glfw.terminate()
 
+    def headless_sim(self, controller=None, sim_length: float = 10.0, warmup: float = 2.0) -> float | None:
+        """
+        Run the simulation as fast as possible with no visual output.
+        Intended for parameter sweeps and CoT benchmarking.
+
+        Args:
+            controller:  Object with a `run()` method (same as sim()).
+            sim_length:  Duration of the *measurement* phase in sim-seconds. Must be > 0.
+            warmup:      Sim-seconds to run before energy/distance tracking begins.
+                         Allows the robot to settle from the initial drop before CoT
+                         is measured. Default 2.0 s. Set to 0 to disable.
+
+        Returns:
+            Cost of Transport (dimensionless), or None if the robot did not
+            move forward during the measurement phase (e.g. fell over).
+        """
+        if sim_length <= 0:
+            raise ValueError("sim_length must be positive for headless_sim.")
+
+        # Reset simulation to t=0 so each call starts from the same initial
+        # state regardless of previous runs on this instance.
+        mj.mj_resetData(self.model, self.data)
+        mj.mj_forward(self.model, self.data)
+
+        # Reset controller internal state (CPG phases, IK warm-start, etc.)
+        # so stale phase accumulation from a previous run doesn't carry over.
+        if controller is not None and hasattr(controller, 'reset'):
+            controller.reset()
+
+        # Set timestep on robot_interface
+        self.robot_interface.dt = self.model.opt.timestep
+
+        # Build control callback: sync sensors → controller → apply torques
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            if self.use_direct:
+                self._apply_controller_targets_directly()
+            else:
+                self._apply_controller_targets_torque()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        # ── Warmup phase: controller runs but energy is NOT counted ──
+        # This lets the robot settle from the initial drop before measurement.
+        warmup_end = self.data.time + warmup
+        while self.data.time < warmup_end:
+            mj.mj_step(self.model, self.data)
+
+        # ── Measurement phase: reset metrics, then accumulate ────────
+        # _start_x is set here so distance is measured from the post-warmup
+        # position, not the drop point.
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
+
+        measure_end = self.data.time + sim_length
+        while self.data.time < measure_end:
+            mj.mj_step(self.model, self.data)
+            self._accumulate_energy()
+
+        mj.set_mjcb_control(None)
+
+        return self.compute_CoT()
+
+    def headless_sim_extended(self, controller=None, sim_length: float = 10.0,
+                              warmup: float = 2.0) -> dict:
+        """
+        Run headless simulation and return extended metrics for RL training.
+
+        Same warmup → measurement loop as headless_sim(), but also tracks
+        forward velocity, average body tilt (roll + pitch), and survival.
+
+        Returns:
+            dict with keys:
+                cot       — Cost of Transport (float or None if robot didn't move)
+                distance  — forward distance travelled during measurement (m)
+                velocity  — average forward velocity during measurement (m/s)
+                avg_tilt  — mean(|roll| + |pitch|) during measurement (rad)
+                survived  — True if body stayed above 0.15 m throughout
+        """
+        if sim_length <= 0:
+            raise ValueError("sim_length must be positive for headless_sim_extended.")
+
+        # Reset simulation
+        mj.mj_resetData(self.model, self.data)
+        mj.mj_forward(self.model, self.data)
+
+        if controller is not None and hasattr(controller, 'reset'):
+            controller.reset()
+
+        self.robot_interface.dt = self.model.opt.timestep
+
+        # Control callback
+        def _control_callback(model, data):
+            self._sync_robot_interface()
+            controller.run()
+            if self.use_direct:
+                self._apply_controller_targets_directly()
+            else:
+                self._apply_controller_targets_torque()
+
+        mj.set_mjcb_control(_control_callback if controller is not None else None)
+
+        if self._robot_mass is None:
+            self._robot_mass = np.sum(self.model.body_mass)
+
+        # ── Warmup phase ──
+        warmup_end = self.data.time + warmup
+        while self.data.time < warmup_end:
+            mj.mj_step(self.model, self.data)
+
+        # ── Measurement phase ──
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
+        tilt_sum = 0.0
+        step_count = 0
+        survived = True
+        min_height = 0.15  # body z threshold for "fell over"
+
+        measure_end = self.data.time + sim_length
+        while self.data.time < measure_end:
+            mj.mj_step(self.model, self.data)
+            self._accumulate_energy()
+
+            # Body tilt from rotation matrix
+            xmat = self.data.body("base_link").xmat.reshape(3, 3)
+            # Roll  = atan2(R[2,1], R[2,2])
+            roll = np.arctan2(xmat[2, 1], xmat[2, 2])
+            # Pitch = -asin(clamp(R[2,0], -1, 1))
+            pitch = -np.arcsin(np.clip(xmat[2, 0], -1.0, 1.0))
+            tilt_sum += abs(roll) + abs(pitch)
+            step_count += 1
+
+            # Survival check
+            body_z = self.data.body("base_link").xpos[2]
+            if body_z < min_height:
+                survived = False
+
+        mj.set_mjcb_control(None)
+
+        # Compute metrics
+        cot = self.compute_CoT()
+        current_x = self.data.qpos[0]
+        distance = current_x - self._start_x if self._start_x is not None else 0.0
+        velocity = distance / sim_length if sim_length > 0 else 0.0
+        avg_tilt = tilt_sum / step_count if step_count > 0 else 0.0
+
+        return {
+            "cot": cot,
+            "distance": distance,
+            "velocity": velocity,
+            "avg_tilt": avg_tilt,
+            "survived": survived,
+        }
 
     def keyboard(self, window, key, scancode, act, mods):
+        # Handle built-in keyboard commands
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
+        
+        # Pass keyboard event to controller if registered
+        if self.controller_keyboard_callback is not None:
+            self.controller_keyboard_callback(window, key, scancode, act, mods)
 
     def mouse_button(self, window, button, act, mods):
         # update button state
@@ -152,3 +761,77 @@ class MujocoSim:
         action = mj.mjtMouse.mjMOUSE_ZOOM
         mj.mjv_moveCamera(self.model, action, 0.0, -0.05 *
                         yoffset, self.scene, self.cam)
+    
+    def remove_gravity(self):
+        self.model.opt.gravity[:] = [0.0, 0.0, 0.0]
+    
+    def enable_air_mode(self, height=1.0):
+        if not self.dispense_in_air:
+            self.height = height
+            self.dispense_in_air = True
+        self.model.opt.gravity[:] = [0, 0, 0]
+        self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+
+        self.data.qvel[0:6] = 0.0
+        self.data.qpos[2] = height
+        mj.mj_forward(self.model, self.data)
+    
+    def enable_graph(self):
+        if self.fig_hip is None:
+            self._init_figures()
+            self.enabled_graph = True
+            # self.enabled_joint_graph = False
+    
+    def enable_joint_graph(self):
+        if self.fig_joints is None:
+            self._init_joint_figures()
+
+        self.enabled_joint_graph = True
+        self.enabled_joint_sliders = False
+
+
+    def enable_joint_sliders(self):
+        if self.slide_joints is None:
+            self._init_joint_sliders()
+ 
+        self.enabled_joint_sliders = True
+        self.enabled_joint_graph = False
+
+    def _accumulate_energy(self):
+        """
+        Accumulate positive mechanical work from actuators.
+        """
+        dt = self.model.opt.timestep
+
+        tau = self.data.actuator_force.copy()
+
+        # Actuator torques correspond to DOFs in qvel
+        qdot = self.data.qvel[:len(tau)]
+
+        mechanical_power = tau * qdot
+
+        # Only count positive work (realistic motor assumption)
+        positive_power = np.maximum(mechanical_power, 0.0)
+
+        self._energy += np.sum(positive_power) * dt
+    
+    def compute_CoT(self):
+        """
+        Compute Cost of Transport (dimensionless).
+        """
+        if self._start_x is None:
+            print("Error: _start_x is None, cannot compute CoT.")
+            return None
+
+        current_x = self.data.qpos[0]   # base x position
+        distance = current_x - self._start_x
+
+        if distance <= 0:
+            # Robot did not move forward — CoT undefined (likely fell over)
+            print("Warning: Robot did not move forward during measurement phase. CoT is undefined.")
+            return None
+
+        g = 9.81
+        # CoT = E / (m * g * d)  — dimensionless cost of transport
+        cot = self._energy / (self._robot_mass * g * distance)
+        return cot
