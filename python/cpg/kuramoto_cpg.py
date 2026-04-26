@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_CNT
 from shared_module.robot_state import RobotInterface
-
+from logger.logger_config import logger
 
 class KuramotoCpg:
     """
@@ -71,6 +71,9 @@ class KuramotoCpg:
         ]
 
         self.d_theta = np.zeros(self.neurons_cnt)
+        self.old_phases = np.array([n.phase for n in self.neurons])  # Store current phases to restore later
+        self.last_toggle = robot_interface.enable_cpg
+
 
     def reset(self) -> None:
         """Reset oscillator phases to the gait's initial values and clear accumulated state.
@@ -82,6 +85,7 @@ class KuramotoCpg:
             n.frequency = frequency
         self.d_theta = np.zeros(self.neurons_cnt)
         self.time_passed = 0.0
+
 
     def set_frequency(self, frequency: float, index: int = None) -> None:
         if index is None:

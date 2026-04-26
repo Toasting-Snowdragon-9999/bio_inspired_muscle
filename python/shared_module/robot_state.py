@@ -131,7 +131,10 @@ class RobotInterface:
         self._duty_factor: float = duty_factor  # fraction of the cycle spent in stance (0–1)
         self._initialized = True
         self._dt = None
-
+        self.enable_cpg = True
+        self.cpg_alpha = 0.0
+        self.cpg_transition_speed = 0.5
+    
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
         return self._trajectory_method
@@ -201,8 +204,8 @@ class RobotInterface:
 
     @property
     def body_orientation(self) -> list[float]:
-        return self._body_orientation
-    
+        return self._body_orientatio
+
     @joint_positions.setter
     def joint_positions(self, joint_positions: dict[Joint, float]):
         self._joint_positions.update(joint_positions)
@@ -274,6 +277,30 @@ class RobotInterface:
     @target_torques.setter
     def target_torques(self, target_torques: dict[Joint, float]):
         self._target_torques.update(target_torques)
+
+    @property
+    def enable_cpg(self) -> bool:
+        return self._enable_cpg
+
+    @enable_cpg.setter
+    def enable_cpg(self, value: bool):
+        self._enable_cpg = value
+
+    @property
+    def cpg_alpha(self) -> float:
+        return self._cpg_alpha
+    
+    @cpg_alpha.setter
+    def cpg_alpha(self, value: float):
+        self._cpg_alpha = value
+
+    @property
+    def cpg_transition_speed(self) -> float:
+        return self._cpg_transition_speed
+    
+    @cpg_transition_speed.setter
+    def cpg_transition_speed(self, value: float):
+        self._cpg_transition_speed = value
 
     def update_mode(self, new_mode: Mode):
         if self.robot_state:

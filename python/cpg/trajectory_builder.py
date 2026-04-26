@@ -418,11 +418,51 @@ class TrajectoryBuilder:
         """Unified entry point — dispatches based on robot_interface.trajectory_method.
         Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER"""
         method = self.robot_interface.trajectory_method
+        foot_positions: dict[Foot, Coordinate]
+        foot_velocities: dict[Foot, Coordinate]
+    
         if method is TrajectoryMethod.OVAL:
-            return self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
+            foot_positions, foot_velocities = self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
 
-        if method is TrajectoryMethod.ELLIPSOID:
-            return self.build_ellipsoid_trajectory(neuron_output, neuron_phase_velocities)
+        elif method is TrajectoryMethod.ELLIPSOID:
+            foot_positions, foot_velocities = self.build_ellipsoid_trajectory(neuron_output, neuron_phase_velocities)
 
         else:  # TrajectoryMethod.EGG (default)
-            return self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
+            foot_positions, foot_velocities = self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
+        
+        return self.apply_cpg_blending(foot_positions, foot_velocities)
+
+    def apply_cpg_blending(
+            self,
+            foot_positions: dict[Foot, Coordinate],
+            foot_velocities: dict[Foot, Coordinate]
+        ) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+        """Blend between CPG trajectory and stance position based on robot_interface.cpg_alpha.
+           When cpg is disabled the robot will fall back to default standing pose (stance_positions). """
+        alpha = self.robot_interface.cpg_alpha
+
+        blended_pos = {}
+        blended_vel = {}
+
+        for foot in foot_positions:
+            pos = foot_positions[foot]
+            vel = foot_velocities[foot]
+            stance = self.stance_positions[foot]
+
+            blended_pos[foot] = Coordinate(
+                x = alpha * pos.x + (1.0 - alpha) * stance.x,
+                y = alpha * pos.y + (1.0 - alpha) * stance.y,
+                z = alpha * pos.z + (1.0 - alpha) * stance.z,
+            )
+
+            blended_vel[foot] = Coordinate(
+                x = alpha * vel.x,
+                y = alpha * vel.y,
+                z = alpha * vel.z,
+            )
+
+            # Optional: hard clamp near zero (prevents jitter)
+            if alpha < 1e-3:
+                blended_vel[foot] = Coordinate(0.0, 0.0, 0.0)
+
+        return blended_pos, blended_vel

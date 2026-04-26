@@ -88,6 +88,14 @@ class IKController:
         Step CPG, solve IK for each leg, write joint targets to robot_interface.
         Called once per simulation timestep via mjcb_control.
         """
+        # ===== Caluculate blend =====
+        if self.robot_interface.enable_cpg:
+            self.robot_interface.cpg_alpha += self.robot_interface.dt * self.robot_interface.cpg_transition_speed
+        else:
+            self.robot_interface.cpg_alpha -= self.robot_interface.dt * self.robot_interface.cpg_transition_speed
+
+        self.robot_interface.cpg_alpha = np.clip(self.robot_interface.cpg_alpha, 0.0, 1.0)
+        
         # ===== CPG & trajectory =====
         self.cpg.set_frequency(self.robot_interface.frequency)  # Update CPG frequency from robot_interface (settable via property)
         self.cpg.run()
@@ -148,10 +156,27 @@ class IKController:
 
         # ===== PD Control =====
         output_torque = self.pd.control(joint_targets, joint_vel_targets)
+        alpha = self.robot_interface.cpg_alpha
+
         for foot, torques in output_torque.items():
             for i, joint in enumerate(FOOT_TO_JOINT_DICT[foot]):
-                tau = np.asarray(torques).flatten()   # force shape (3,)
-                self.robot_interface.target_torques[joint] = tau[i]  # i = 1,2,3 for hip, thigh, knee respectively
+                tau_feedback = np.asarray(torques).flatten()[i] # Scalar
+                tau_motion = alpha * tau_feedback   # Scaled by the blend factor
+
+                q = self.robot_interface.joint_positions[joint]
+                dq = self.robot_interface.joint_velocities[joint]
+                q_stance = joint_targets[joint]
+
+                # Arbitrary kp and kd for supportive torque. 
+                kp_stance = 40.0
+                kd_stance = 5.0
+
+                # Ordinary pd - kp(q_d - q) - kd * dq
+                tau_support = kp_stance * (q_stance - q) - kd_stance * dq   
+
+                tau = tau_motion + tau_support * (1.0 - alpha)  # fade the support torque in as CPG fades in
+
+                self.robot_interface.target_torques[joint] = tau
         # ===== PD Control END =====
 
     def keyboard_callback(self, window, key, scancode, act, mods):

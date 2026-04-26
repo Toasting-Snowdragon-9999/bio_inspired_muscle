@@ -17,9 +17,14 @@ def test_cpg_output():
     traj = TrajectoryBuilder(robot_interface)
 
     second = 5.0 
-    steps = int(second / robot_interface.dt)
+    steps = int((second) / robot_interface.dt)
     output = {}
     for step in range(steps):
+        if step == steps // 4:
+            robot_interface.enable_cpg = False
+        if step == 2 * steps // 4:
+            robot_interface.enable_cpg = True
+            cpg.reset()  # Reset phases to zero to test that they resume correctly when re-enabled
         cpg.run()
         output[step] = cpg.get_oscillator_outputs()
     time = np.arange(steps) * robot_interface.dt
@@ -590,12 +595,19 @@ def test_ellipsoid_traj():
     seconds = 5.0
     steps   = int(seconds / robot_interface.dt)
     foot_trajectories = []
+    phase_zero_points = {foot: [] for foot in Foot}
+    threshold = 0.01
+
     for _ in range(steps):
         cpg.run()
         phase = cpg.get_phase_outputs()
+        
         vel   = cpg.get_phase_velocities()
         traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
         foot_trajectories.append(traj)
+        for i, foot in enumerate([Foot.FL, Foot.FR, Foot.RL, Foot.RR]):
+            if -threshold < phase[i] < threshold:
+                phase_zero_points[foot].append((traj[foot].x, traj[foot].z))
 
     # Show only the last 2 gait cycles for a clean shape
     cycles_to_show = int(2.0 / robot_interface.dt)
@@ -627,6 +639,11 @@ def test_ellipsoid_traj():
             sz = builder.stance_positions[foot].z
             ax.plot(sx, sz, 'o', color='blue', markersize=7, zorder=5,
                     label='stance' if foot == feet[0] else None)
+
+            if phase_zero_points[foot]:
+                gx, gz = zip(*phase_zero_points[foot])
+                ax.scatter(gx, gz, color='lime', s=30, zorder=6,
+                        label='phase ≈ 0' if foot == feet[0] else None)
         ax.set_title(title)
         ax.set_xlabel('X — forward / back (m)')
         ax.set_ylabel('Z — height (m)')
@@ -640,7 +657,9 @@ def test_ellipsoid_traj():
 def test_main():
     print("==================================================")
     print("Testing ellipsoid trajectory")
+    test_cpg_output()
     test_ellipsoid_traj()
+
     print("==================================================")
     return
 
