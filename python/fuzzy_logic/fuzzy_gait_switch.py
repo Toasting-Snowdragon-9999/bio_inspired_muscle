@@ -1,5 +1,6 @@
 import os,sys
 from typing import Any
+from enum import Enum
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 import numpy as np
@@ -8,6 +9,61 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import Gait
+
+MAX_VELOCITY = 1.0
+MIN_VELOCITY = 0.0
+
+class VelType(Enum):
+    SLOW = "slow"
+    MEDIUM = "medium"
+    FAST = "fast"
+
+class VelCmd:
+    def __init__(self, velocity: float):
+        if velocity < MIN_VELOCITY or velocity > MAX_VELOCITY:
+            raise ValueError("Velocity must be between 0 and 1")
+        self._v = velocity
+        self._type = self._classify_velocity()
+
+    def _classify_velocity(self) -> VelType:
+        if self._v < 0.3:
+            return VelType.SLOW
+        elif self._v < 0.7:
+            return VelType.MEDIUM
+        else:
+            return VelType.FAST
+
+    @property
+    def v(self) -> float:
+        return self._v
+
+    @property
+    def type(self) -> VelType:
+        return self._type
+
+    @v.setter
+    def v(self, value: float):
+        if value < MIN_VELOCITY or value > MAX_VELOCITY:
+            raise ValueError("Velocity must be between 0 and 1")
+        self._v = value 
+        self._type = self._classify_velocity()
+
+
+class GaitPicker:
+    def __init__(self):
+        self.high_state = False  # Hysteresis state
+
+    def pick_gait(self, vel: VelCmd) -> Gait:
+        """Simple heuristic gait picker based on velocity type with hysteresis."""
+        upper_threshold = 0.7
+        lower_threshold = 0.3
+        if self.high_state and vel.v < lower_threshold:
+            self.high_state = False
+        elif not self.high_state and vel.v > upper_threshold:
+            self.high_state = True
+
+        # Look at the current gait and what possible next gait or prev gait. 
+        # if we are in high state and the vel.type doesnt corrospond with our current gait, we should switch.
 
 class FuzzyGaitSwitch:
     def __init__(self):
