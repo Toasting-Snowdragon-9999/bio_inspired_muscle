@@ -107,7 +107,6 @@ class GaitPicker:
         elif current_gait == Gait.GALLOP:
             if v < 0.85:
                 return Gait.CANTER
-
         return current_gait
 
 class FuzzyGaitSwitch:
@@ -115,11 +114,11 @@ class FuzzyGaitSwitch:
         self.robot_interface = robot_interface
         # Define fuzzy variables
         # self.vel_cmd = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'velocity')
-        self.stability = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'stability')
-        self.speed_error = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'speed_error')
+        self.stability = ctrl.Antecedent(np.arange(0, 1.01, 0.01), 'stability')
+        self.speed_error = ctrl.Antecedent(np.arange(0, 1.01, 0.01), 'speed_error')
 
         # self.frequency = ctrl.Consequent(np.arange(0, 4.0, 0.01), 'frequency')
-        self.blend_rate = ctrl.Consequent(np.arange(-1.0, 1.01, 0.01), 'blend_rate')
+        self.blend_rate = ctrl.Consequent(np.arange(0.0, 1.01, 0.01), 'blend_rate')
         self.blending_factor = 0.0  # Initialize blending factor
 
         self.stability['very_unstable'] = fuzz.trapmf(self.stability.universe, [0.0, 0.0, 0.2, 0.4])
@@ -131,11 +130,11 @@ class FuzzyGaitSwitch:
         self.speed_error['medium'] = fuzz.trimf(self.speed_error.universe, [0.3, 0.5, 0.7])
         self.speed_error['high']   = fuzz.trapmf(self.speed_error.universe, [0.6, 0.8, 1.0, 1.0])
 
-        self.blend_rate['backward_fast'] = fuzz.trapmf(self.blend_rate.universe, [-1.00, -1.00, -0.70, -0.45])
-        self.blend_rate['backward_slow'] = fuzz.trimf(self.blend_rate.universe, [-0.65, -0.32, -0.05])
-        self.blend_rate['hold'] = fuzz.trimf(self.blend_rate.universe, [-0.10, 0.00, 0.10])
-        self.blend_rate['forward_slow'] = fuzz.trimf(self.blend_rate.universe, [0.05, 0.32, 0.65])
-        self.blend_rate['forward_fast'] = fuzz.trapmf(self.blend_rate.universe, [0.45, 0.70, 1.00, 1.00])
+        self.blend_rate['backward_fast'] = fuzz.trapmf(self.blend_rate.universe, [0.00, 0.00, 0.15, 0.35])
+        self.blend_rate['backward_slow'] = fuzz.trimf(self.blend_rate.universe, [0.25, 0.4, 0.6])
+        self.blend_rate['hold'] = fuzz.trimf(self.blend_rate.universe, [0.45, 0.05, 0.65])
+        self.blend_rate['forward_slow'] = fuzz.trimf(self.blend_rate.universe, [1.05, 1.32, 1.65])
+        self.blend_rate['forward_fast'] = fuzz.trapmf(self.blend_rate.universe, [1.45, 1.70, 2.00, 2.00])
 
         # Define the fuzzy rules
         self.high_stability_rule1 = ctrl.Rule(self.speed_error['low'] & self.stability['very_stable'], self.blend_rate['hold'])
@@ -208,11 +207,17 @@ class FuzzyGaitSwitch:
         # `next_gait` accessor crashes when next_state is None (it does
         # `next_state.gait` unconditionally), so guard at the source instead.
         next_state = self.robot_interface.robot_state.next_state if self.robot_interface.robot_state else None
+        logger.info(f"Initiating fuzzy gait transition from {current_gait} to {next_state}")
+
         target_gait = next_state.gait if next_state is not None else None
+
         if target_gait is None or current_gait == target_gait:
+            if self.robot_interface.current_mode == Mode.TRANSITION:
+                self.robot_interface.update_mode(Mode.MOVING)
             return current_gait
         
-        self.robot_interface.current_mode = Mode.TRANSITION
+        self.robot_interface.update_mode(Mode.TRANSITION)
+        robot_vel = self.robot_interface.body_velocity
         self.fuzzy_sim.input['speed_error'] = self.robot_interface.target_speed - self.robot_interface.body_velocity
         self.fuzzy_sim.input['stability'] = self.robot_interface.stability_metric
 

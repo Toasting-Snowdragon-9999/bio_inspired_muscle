@@ -177,7 +177,7 @@ class RobotInterface:
         self.cpg_alpha = 0.0
         self.cpg_transition_speed = 0.5
         self.body_velocity = 0.0
-        self.target_speed = 0.0
+        self.target_speed = 0.5
         # Neutral default so the fuzzy controller has a sane input until a real
         # stability estimator is wired up. 0.75 falls in the 'stable' band.
         self.stability_metric = 0.75
@@ -409,6 +409,6 @@ def main():
     print("Current State after transition:", robot.current_state)
 
     print("Gait phases", robot.current_state.gait.value)
-    
+
 if __name__ == "__main__":
     main()
