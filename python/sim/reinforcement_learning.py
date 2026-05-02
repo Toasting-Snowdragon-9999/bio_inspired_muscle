@@ -482,7 +482,7 @@ def main() -> None:
         gait = Gait[args.gait.upper()]
     except KeyError:
         print(f"ERROR: Unknown gait '{args.gait}'. "
-              f"Available: {[g.name for g in Gait if g != Gait.NONE]}")
+              f"Available: {list(Gait._registry.keys())}")
         sys.exit(1)
 
     # ── Build reward weights from CLI args ───────────────────────────────────

@@ -5,9 +5,10 @@ from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from logger.logger_config import logger
 from cpg.kuramoto_cpg import KuramotoCpg
 from inverse_kinematics.inverse_kin import *
-from shared_module.robot_state import Joint, RobotInterface, Foot
+from shared_module.robot_state import Joint, RobotInterface, Foot, Mode
 from shared_module.global_constants import FOOT_TO_JOINT_DICT
 from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, Coordinate
 from pd.muscle_like_pd import MuscleLikePD
@@ -95,7 +96,23 @@ class IKController:
             self.robot_interface.cpg_alpha -= self.robot_interface.dt * self.robot_interface.cpg_transition_speed
 
         self.robot_interface.cpg_alpha = np.clip(self.robot_interface.cpg_alpha, 0.0, 1.0)
-        
+
+        # ===== Still-mode detection =====
+        if self.robot_interface.enable_cpg:
+            if self.robot_interface.current_mode == Mode.STILL:
+                self.robot_interface.update_mode(Mode.MOVING)
+        elif self.robot_interface.cpg_alpha == 0.0:
+            body_speed = abs(float(self.robot_interface.body_velocity))
+            joint_vels = self.robot_interface.joint_velocities.values()
+            joint_speed = max((abs(v) for v in joint_vels), default=0.0)
+
+            BODY_STILL_EPS = 0.02   # m/s
+            JOINT_STILL_EPS = 0.05  # rad/s
+            if body_speed < BODY_STILL_EPS and joint_speed < JOINT_STILL_EPS:
+                if self.robot_interface.current_mode != Mode.STILL:
+                    self.robot_interface.update_mode(Mode.STILL)
+        # ===== Still-mode detection END =====
+
         # ===== CPG & trajectory =====
         self.cpg.set_frequency(self.robot_interface.frequency)  # Update CPG frequency from robot_interface (settable via property)
         self.cpg.run()

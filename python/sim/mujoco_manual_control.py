@@ -122,7 +122,7 @@ class InteractiveController:
 
 def main():
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
-    robot_interface = RobotInterface(State(mode=Mode.MOVING, gait=Gait.NONE))
+    robot_interface = RobotInterface(State(mode=Mode.MOVING, gait=Gait.WALK))
     controller = InteractiveController(robot_interface)
     sim = MujocoSim(xml_path, robot_interface)
     sim.enable_air_mode(0.5)

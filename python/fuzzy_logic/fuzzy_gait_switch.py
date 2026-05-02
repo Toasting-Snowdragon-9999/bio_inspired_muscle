@@ -1,17 +1,44 @@
 import os,sys
 from typing import Any
-from enum import Enum
+from enum import Enum, auto
+
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared_module.robot_state import Gait
+from shared_module.robot_state import Gait, Mode, RobotInterface
+from logger.logger_config import logger
 
 MAX_VELOCITY = 1.0
 MIN_VELOCITY = 0.0
+
+# class GaitIndex(Enum):
+#     WALK = 0
+#     AMBLE = 1
+#     TROT = 2
+#     CANTER = 3
+#     GALLOP = 4
+#     MAX_GAIT_INDEX = auto()
+
+# gait_to_index = {
+#     Gait.WALK: GaitIndex.WALK,
+#     Gait.AMBLE: GaitIndex.AMBLE,
+#     Gait.TROT: GaitIndex.TROT,
+#     Gait.CANTER: GaitIndex.CANTER,
+#     Gait.GALLOP: GaitIndex.GALLOP,
+#     Gait.NONE: GaitIndex.MAX_GAIT_INDEX
+# }
+
+# # index_to_gait = {v: k for k, v in gait_to_index.items()}
+# index_to_gait = {
+#     GaitIndex.WALK: Gait.WALK,
+#     GaitIndex.AMBLE: Gait.AMBLE,
+#     GaitIndex.TROT: Gait.TROT,
+#     GaitIndex.CANTER: Gait.CANTER,
+#     GaitIndex.GALLOP: Gait.GALLOP,
+#     GaitIndex.MAX_GAIT_INDEX: Gait.NONE
+# }
 
 class VelType(Enum):
     SLOW = "slow"
@@ -21,7 +48,8 @@ class VelType(Enum):
 class VelCmd:
     def __init__(self, velocity: float):
         if velocity < MIN_VELOCITY or velocity > MAX_VELOCITY:
-            raise ValueError("Velocity must be between 0 and 1")
+            logger.error("Velocity must be between 0 and 1, capping to valid range")
+            velocity = max(MIN_VELOCITY, min(MAX_VELOCITY, velocity))
         self._v = velocity
         self._type = self._classify_velocity()
 
@@ -44,29 +72,47 @@ class VelCmd:
     @v.setter
     def v(self, value: float):
         if value < MIN_VELOCITY or value > MAX_VELOCITY:
-            raise ValueError("Velocity must be between 0 and 1")
+            logger.error("Velocity must be between 0 and 1, capping to valid range")
+            value = max(MIN_VELOCITY, min(MAX_VELOCITY, value))
         self._v = value 
         self._type = self._classify_velocity()
 
 
 class GaitPicker:
-    def __init__(self):
-        self.high_state = False  # Hysteresis state
+    def pick_gait(self, vel: VelCmd, current_gait: Gait) -> Gait:
+        v = vel.v
 
-    def pick_gait(self, vel: VelCmd) -> Gait:
-        """Simple heuristic gait picker based on velocity type with hysteresis."""
-        upper_threshold = 0.7
-        lower_threshold = 0.3
-        if self.high_state and vel.v < lower_threshold:
-            self.high_state = False
-        elif not self.high_state and vel.v > upper_threshold:
-            self.high_state = True
+        if current_gait == Gait.WALK:
+            if v > 0.35:
+                return Gait.AMBLE
 
-        # Look at the current gait and what possible next gait or prev gait. 
-        # if we are in high state and the vel.type doesnt corrospond with our current gait, we should switch.
+        elif current_gait == Gait.AMBLE:
+            if v < 0.25:
+                return Gait.WALK
+            elif v > 0.55:
+                return Gait.TROT
+
+        elif current_gait == Gait.TROT:
+            if v < 0.45:
+                return Gait.AMBLE
+            elif v > 0.75:
+                return Gait.CANTER
+
+        elif current_gait == Gait.CANTER:
+            if v < 0.65:
+                return Gait.TROT
+            elif v > 0.9:
+                return Gait.GALLOP
+
+        elif current_gait == Gait.GALLOP:
+            if v < 0.85:
+                return Gait.CANTER
+
+        return current_gait
 
 class FuzzyGaitSwitch:
-    def __init__(self):
+    def __init__(self, robot_interface: RobotInterface):
+        self.robot_interface = robot_interface
         # Define fuzzy variables
         # self.vel_cmd = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'velocity')
         self.stability = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'stability')
@@ -75,15 +121,6 @@ class FuzzyGaitSwitch:
         # self.frequency = ctrl.Consequent(np.arange(0, 4.0, 0.01), 'frequency')
         self.blend_rate = ctrl.Consequent(np.arange(-1.0, 1.01, 0.01), 'blend_rate')
         self.blending_factor = 0.0  # Initialize blending factor
-
-        # Define membership functions
-        # self.vel_cmd['slow']   = fuzz.trapmf(self.vel_cmd.universe, [0.0, 0.0, 0.2, 0.4])
-        # self.vel_cmd['medium'] = fuzz.trimf(self.vel_cmd.universe, [0.25, 0.5, 0.75])
-        # self.vel_cmd['fast']   = fuzz.trapmf(self.vel_cmd.universe, [0.6, 0.8, 1.0, 1.0])
-
-        # self.frequency['low']    = fuzz.trapmf(self.frequency.universe, [0.0, 0.0, 1.0, 2.0])
-        # self.frequency['medium'] = fuzz.trimf(self.frequency.universe, [1.8, 2.5, 3.0])
-        # self.frequency['high']   = fuzz.trapmf(self.frequency.universe, [2.8, 3.5, 4.0, 4.0])
 
         self.stability['very_unstable'] = fuzz.trapmf(self.stability.universe, [0.0, 0.0, 0.2, 0.4])
         self.stability['unstable']      = fuzz.trimf(self.stability.universe, [0.3, 0.5, 0.7])
@@ -117,52 +154,88 @@ class FuzzyGaitSwitch:
         self.very_unstable_rule2 = ctrl.Rule(self.speed_error['medium'] & self.stability['very_unstable'], self.blend_rate['backward_fast'])
         self.very_unstable_rule3 = ctrl.Rule(self.speed_error['high'] & self.stability['very_unstable'], self.blend_rate['backward_fast'])
         
-        # Define the system
-        fuzzy_ctrl   = ctrl.ControlSystem([self.vel_stability_rule]) # Create a control system
-        fuzzy_sim    = ctrl.ControlSystemSimulation(fuzzy_ctrl) # Create a simulation for your control system
+        # Define the system — collect every Rule defined above into one
+        # ControlSystem and store the simulation on `self` so update() can
+        # drive it. (Previously this was a local with a typo'd rule list,
+        # which is why `self.fuzzy_sim` didn't exist at update time.)
+        all_rules = [
+            self.high_stability_rule1, self.high_stability_rule2, self.high_stability_rule3,
+            self.stability_rule1,      self.stability_rule2,      self.stability_rule3,
+            self.unstable_rule1,       self.unstable_rule2,       self.unstable_rule3,
+            self.very_unstable_rule1,  self.very_unstable_rule2,  self.very_unstable_rule3,
+        ]
+        self.fuzzy_ctrl = ctrl.ControlSystem(all_rules)
+        self.fuzzy_sim = ctrl.ControlSystemSimulation(self.fuzzy_ctrl)
 
     def show_membership_functions(self):
-        self.vel_cmd.view()
+        # Lazy import: matplotlib.pyplot is heavy and binds a backend on first
+        # import, so keep it out of module scope.
+        import matplotlib.pyplot as plt
         self.stability.view()
         self.speed_error.view()
-        self.frequency.view()
         self.blend_rate.view()
         plt.show()
 
-    def blending_factor(self, blend_rate_output: float, dt: float) -> float:
-        """Update blending factor based on blend_rate output."""
-        self.blending_factor = np.clip(self.blending_factor + blend_rate_output * dt, 0.0, 1.0)
+    def update_blending_factor(self, blend_rate_output: float, dt: float) -> float:
+        """Integrate the fuzzy blend_rate into the persistent blending_factor.
+
+        `dt` is the wall time elapsed since the previous call — when this
+        method is driven from a decimated tick (e.g. every 30 sim steps),
+        pass `decimated_steps * sim_dt`, NOT `sim_dt`, otherwise the
+        integration runs ~30x slower than intended.
+        """
+        self.blending_factor = float(np.clip(self.blending_factor + blend_rate_output * dt, 0.0, 1.0))
         return self.blending_factor
 
     def interpolate(self, a: float, b: float, s: float) -> float:
         """Linear interpolation between a and b with blending factor s."""
         return (1 - s) * a + s * b
 
-    def blend_gaits(self, old_gait, new_gait, blending_factor) -> Any:
+    def blend_gaits(self, old_gait: Gait, new_gait: Gait, blending_factor: float) -> Any:
+        trans_gait_values = []
+        for a, b in zip(old_gait.value, new_gait.value):
+            trans_gait_values.append(self.interpolate(a, b, blending_factor))
+        return Gait("BLENDED_GAIT", tuple(trans_gait_values))
+
+    def blend_trajectories(self, old_traj_params, new_traj_params, blending_factor) -> Any:
         pass
 
-    def blend_trajectories(self, old_traj, new_traj, blending_factor) -> Any:
-        pass
+    def update(self, dt: float) -> Gait:
+        # `dt` is the elapsed time since the last call — when driven from a
+        # decimated tick this is the accumulated dt (decimated_steps * sim_dt),
+        # NOT the underlying sim timestep.
+        current_gait = self.robot_interface.current_gait
+        # `next_gait` accessor crashes when next_state is None (it does
+        # `next_state.gait` unconditionally), so guard at the source instead.
+        next_state = self.robot_interface.robot_state.next_state if self.robot_interface.robot_state else None
+        target_gait = next_state.gait if next_state is not None else None
+        if target_gait is None or current_gait == target_gait:
+            return current_gait
+        
+        self.robot_interface.current_mode = Mode.TRANSITION
+        self.fuzzy_sim.input['speed_error'] = self.robot_interface.target_speed - self.robot_interface.body_velocity
+        self.fuzzy_sim.input['stability'] = self.robot_interface.stability_metric
 
-    def update(self, ) -> Gait:
-        pass
+        self.fuzzy_sim.compute()
+        blend_rate_output = self.fuzzy_sim.output['blend_rate']
+        blending_factor = self.update_blending_factor(blend_rate_output, dt)
+        gait_params = self.blend_gaits(self.robot_interface.current_gait, target_gait, blending_factor)
+        # traj_params = self.blend_trajectories(, blending_factor)
+        return current_gait
 
-    def gait_picker(self, velocity: float) -> Gait:
-        pass
+class FuzzyController:
+    def __init__(self, robot_interface: RobotInterface):
+        self.robot_interface = robot_interface
+        self.gait_picker = GaitPicker()
+        self.fuzzy_gait_switch = FuzzyGaitSwitch(robot_interface)
 
-        # self.fuzzy_sim.input['velocity'] = self.robot_interface.body_velocity
-        # self.fuzzy_sim.input['stability'] = self.robot_interface.stability_metric
+    def update(self, dt: float) -> None:
+        """Decimated fuzzy tick. `dt` is the wall time elapsed since the
+        previous call (set by the caller), not the sim timestep — the
+        downstream integrator needs the real interval."""
+        vel_cmd = VelCmd(self.robot_interface.target_speed)
+        transition_gait = self.gait_picker.pick_gait(vel_cmd, self.robot_interface.current_gait)
+        self.robot_interface.next_gait = transition_gait
 
-        # self.fuzzy_sim.compute()
-
-        # # Read outputs
-        # freq = self.fuzzy_sim.output['frequency']
-        # duty = self.fuzzy_sim.output['duty_factor']
-
-        # # Apply (optionally smooth)
-        # self.robot_interface.frequency = freq
-        # self.robot_interface.duty_factor = duty
-    
-if __name__ == "__main__":
-    fuzzy_switch = FuzzyGaitSwitch()
-    fuzzy_switch.show_membership_functions()
+        new_gait = self.fuzzy_gait_switch.update(dt)
+        self.robot_interface.update_gait(new_gait)

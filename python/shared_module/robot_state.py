@@ -3,33 +3,75 @@ from enum import Enum, auto
 import numpy as np
 
 # Define gait phases for each foot in the order: FL, FR, RL, RR
-class Gait(Enum):
-    WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)
-    TROT   = (0.0, np.pi,   0.0,   np.pi)
-    CANTER = (1.3 * np.pi, 0.85 * np.pi, 0.0, 0.6 * np.pi)
-    GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
+# class OLD_Gait(Enum):
+#     WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)
+#     TROT   = (0.0, np.pi,   0.0,   np.pi)
+#     CANTER = (1.3 * np.pi, 0.85 * np.pi, 0.0, 0.6 * np.pi)
+#     GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
 
-    # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
-    # CANTER = (1.25 * np.pi,  1.75 * np.pi, 0.50 * np.pi, 0.0)
-    # BOUND  = (0.0, 0.0,     np.pi, np.pi)
-    # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
+#     # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
+#     # CANTER = (1.25 * np.pi,  1.75 * np.pi, 0.50 * np.pi, 0.0)
+#     # BOUND  = (0.0, 0.0,     np.pi, np.pi)
+#     # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
 
 
-    # Transitional     
-    PACE   = (0.0, np.pi,   np.pi, 0.0)
-    AMBLE = (np.pi/2, 3*np.pi/2, 0.0, np.pi)
+#     # Transitional     
+#     PACE   = (0.0, np.pi,   np.pi, 0.0)
+#     AMBLE = (np.pi/2, 3*np.pi/2, 0.0, np.pi)
 
-    NONE   = (0.0, 0.0,     0.0,   0.0)
+#     NONE   = (0.0, 0.0,     0.0,   0.0)
+
+#     def __str__(self):
+#         return self.name
+
+#     def __value__(self):
+#         return self._value_
+
+class Gait:
+    _registry = {}
+
+    def __init__(self, name, phases):
+        self.name = name
+        self._value_ = phases
+        Gait._registry[name] = self
 
     def __str__(self):
         return self.name
 
-    def __value__(self):
+    @property
+    def value(self):
         return self._value_
+
+    def __eq__(self, other):
+        if isinstance(other, Gait):
+            return self._value_ == other._value_
+        return False
+
+    # Hash by name so a Gait stays usable as a dict key even after
+    # `override_enum_value` mutates `_value_` (the tuple is the equality
+    # key but mutates at runtime; the name is stable for the singleton).
+    def __hash__(self):
+        return hash(self.name)
+
+    def __repr__(self):
+        return f"Gait.{self.name}"
+
+    # `Gait[name]` lookup — used by callers (heatmap_cot, sim_view, RL/AI
+    # scripts) that resolve a gait from a CLI/GUI string. Mirrors the old
+    # `Enum.__getitem__` so those callsites don't need to change.
+    def __class_getitem__(cls, name):
+        return cls._registry[name]
+
+Gait.WALK   = Gait("WALK",   (3*np.pi/2, np.pi/2, 0.0, np.pi))
+Gait.TROT   = Gait("TROT",   (0.0, np.pi, 0.0, np.pi))
+Gait.AMBLE  = Gait("AMBLE", (np.pi/2, 3*np.pi/2, 0.0, np.pi))
+Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0, 0.6*np.pi))
+Gait.GALLOP = Gait("GALLOP", (0.0, 0.2*np.pi, 0.8*np.pi, np.pi))
 
 class Mode(Enum):
     MOVING = 1
     TRANSITION = 2
+    STILL = 3
 
     def __str__(self):
         return self.name
@@ -134,6 +176,12 @@ class RobotInterface:
         self.enable_cpg = True
         self.cpg_alpha = 0.0
         self.cpg_transition_speed = 0.5
+        self.body_velocity = 0.0
+        self.target_speed = 0.0
+        # Neutral default so the fuzzy controller has a sane input until a real
+        # stability estimator is wired up. 0.75 falls in the 'stable' band.
+        self.stability_metric = 0.75
+
     
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
@@ -164,10 +212,27 @@ class RobotInterface:
     @property
     def current_gait(self) -> Gait:
         return self.robot_state.current_state.gait if self.robot_state else None
-
+    
+    @property
+    def next_gait(self) -> Gait:
+        return self.robot_state.next_state.gait if self.robot_state else None
+    
+    @next_gait.setter
+    def next_gait(self, gait: Gait):
+        if self.robot_state:
+            self.robot_state.next_state = State(mode=self.robot_state.current_state.mode, gait=gait, frequency=self.robot_state.current_state.frequency)
+        else:
+            raise ValueError("Cannot set next gait without an existing robot state. Please initialize the robot state first.")
     @property
     def current_mode(self) -> Mode:
         return self.robot_state.current_state.mode if self.robot_state else None
+
+    @current_mode.setter
+    def current_mode(self, mode: Mode):
+        if self.robot_state:
+            self.robot_state.current_state.mode = mode
+        else:
+            raise ValueError("Cannot set current mode without an existing robot state. Please initialize the robot state first.")
 
     @property
     def frequency(self) -> float:
@@ -334,19 +399,16 @@ class RobotInterface:
         if self.robot_state:
             self.robot_state.next_state = next_state
 
-    def get_current_state(self) -> State:
-        return self.robot_state.current_state if self.robot_state else None
-
 
 def main():
     robot = RobotInterface(State(mode=Mode.STILL, gait=Gait.WALK, frequency=0.5))
     robot.update_state(State(mode=Mode.MOVING, gait=Gait.WALK, frequency=0.5))
-    print("Current State:", robot.get_current_state())
+    print("Current State:", robot.current_state)
     robot.set_next_state(State(mode=Mode.MOVING, gait=Gait.TROT, frequency=0.7))
     robot.update_state()
-    print("Current State after transition:", robot.get_current_state())
+    print("Current State after transition:", robot.current_state)
 
-    print("Gait phases", robot.get_current_state().gait.value)
-
+    print("Gait phases", robot.current_state.gait.value)
+    
 if __name__ == "__main__":
     main()
