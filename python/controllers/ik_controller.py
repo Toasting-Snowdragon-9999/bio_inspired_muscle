@@ -102,6 +102,8 @@ class IKController:
             if self.robot_interface.current_mode == Mode.STILL:
                 self.robot_interface.update_mode(Mode.MOVING)
         elif self.robot_interface.cpg_alpha == 0.0:
+            # Estimate body velocity from foot velocities using Jacobian pseudoinvers
+            # If still enough, switch to STILL mode
             body_speed = abs(float(self.robot_interface.body_velocity))
             joint_vels = self.robot_interface.joint_velocities.values()
             joint_speed = max((abs(v) for v in joint_vels), default=0.0)
@@ -119,14 +121,16 @@ class IKController:
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()
         foot_targets, foot_velocities = self.traj_builder.build_trajectory(phase_outputs, phase_velocities)
-        # Build proper vel dict from dict[Foot, Coordinate] to dict[Foot, np.ndarray]
 
+        # Build proper vel dict from dict[Foot, Coordinate] to dict[Foot, np.ndarray]
         pos_targets = {
             foot: np.array([pos.x, pos.y, pos.z]) 
                             for foot, pos in foot_targets.items()
         }
         # ===== CPG & trajectory END =====
-
+        # ===== Estimate body velocity from foot velocities using Jacobian pseudoinverse =====
+        self.estimate_body_velocity()
+        
         # ===== IK =====
         joint_targets: dict[Joint, float] = {}
         joint_vel_targets: dict[Joint, float] = {}
@@ -195,6 +199,46 @@ class IKController:
 
                 self.robot_interface.target_torques[joint] = tau
         # ===== PD Control END =====
+
+    def estimate_body_velocity(self):
+        v_estimates = []
+
+        phase_outputs = self.cpg.get_phase_outputs()
+        duty = self.robot_interface.duty_factor
+
+        for foot in Foot:
+            phase = phase_outputs[foot]
+
+            if phase > 2.0 * np.pi * duty:
+                continue
+
+            joints = FOOT_TO_JOINT_DICT[foot]
+
+            q = np.array([
+                self.robot_interface.joint_positions[j]
+                for j in joints
+            ])
+
+            q_dot = np.array([
+                self.robot_interface.joint_velocities[j]
+                for j in joints
+            ])
+
+            d_y = LEG_CONFIG[foot]["d_y"]
+            J = leg_jacobian(q, d_y)
+
+            v_foot = J @ q_dot
+
+            v_body = -v_foot
+
+            v_estimates.append(v_body)
+
+        if len(v_estimates) > 0:
+            avg_v_body = np.mean(v_estimates, axis=0)
+
+            self.robot_interface.body_velocity = float(avg_v_body[0])  # forward velocity only
+
+
 
     def keyboard_callback(self, window, key, scancode, act, mods):
         if act != glfw.PRESS:

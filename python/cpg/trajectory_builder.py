@@ -77,7 +77,7 @@ class TrajectoryBuilder:
         Duty factor is the fraction of stance phase, 0.8 means 80% stance, 20% swing.
         """
         self.robot_interface = robot_interface
-
+        self.robot_interface.current_traj_params = ellipsoid_config
         # Normalise width/height: if None or a bare scalar is passed, expand to a
         # per-foot dict so all internal code can always do self.width[foot] safely.
         _default_width  = {Foot.FL: 0.1,  Foot.FR: 0.1,  Foot.RL: 0.1,  Foot.RR: 0.1}
@@ -322,7 +322,7 @@ class TrajectoryBuilder:
         )
 
         FRONT_FEET = {Foot.FL, Foot.FR}
-        cfg: EllipsoidConfig = self.ellipsoid_config
+        cfg: EllipsoidConfig = self.robot_interface.current_traj_params
         blend = self.blend_sharpness   # tanh sharpness (shared with egg/oval)
         foot_positions:  dict[Foot, Coordinate] = {}
         foot_velocities: dict[Foot, Coordinate] = {}

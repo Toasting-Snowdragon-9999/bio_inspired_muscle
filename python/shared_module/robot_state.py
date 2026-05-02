@@ -3,30 +3,6 @@ from enum import Enum, auto
 import numpy as np
 
 # Define gait phases for each foot in the order: FL, FR, RL, RR
-# class OLD_Gait(Enum):
-#     WALK   = (3*np.pi/2, np.pi/2, 0.0, np.pi)
-#     TROT   = (0.0, np.pi,   0.0,   np.pi)
-#     CANTER = (1.3 * np.pi, 0.85 * np.pi, 0.0, 0.6 * np.pi)
-#     GALLOP = (0.0, 0.20 * np.pi, np.pi*0.8, np.pi*1.0)
-
-#     # WALK   = (0.0, np.pi/2, 3*np.pi/2, np.pi)  #  FL, FR,  RR, RL
-#     # CANTER = (1.25 * np.pi,  1.75 * np.pi, 0.50 * np.pi, 0.0)
-#     # BOUND  = (0.0, 0.0,     np.pi, np.pi)
-#     # GALLOP = (0.0, 0.0,     np.pi*0.8, np.pi*0.8)
-
-
-#     # Transitional     
-#     PACE   = (0.0, np.pi,   np.pi, 0.0)
-#     AMBLE = (np.pi/2, 3*np.pi/2, 0.0, np.pi)
-
-#     NONE   = (0.0, 0.0,     0.0,   0.0)
-
-#     def __str__(self):
-#         return self.name
-
-#     def __value__(self):
-#         return self._value_
-
 class Gait:
     _registry = {}
 
@@ -47,24 +23,18 @@ class Gait:
             return self._value_ == other._value_
         return False
 
-    # Hash by name so a Gait stays usable as a dict key even after
-    # `override_enum_value` mutates `_value_` (the tuple is the equality
-    # key but mutates at runtime; the name is stable for the singleton).
     def __hash__(self):
         return hash(self.name)
 
     def __repr__(self):
         return f"Gait.{self.name}"
 
-    # `Gait[name]` lookup — used by callers (heatmap_cot, sim_view, RL/AI
-    # scripts) that resolve a gait from a CLI/GUI string. Mirrors the old
-    # `Enum.__getitem__` so those callsites don't need to change.
     def __class_getitem__(cls, name):
         return cls._registry[name]
 
 Gait.WALK   = Gait("WALK",   (3*np.pi/2, np.pi/2, 0.0, np.pi))
 Gait.TROT   = Gait("TROT",   (0.0, np.pi, 0.0, np.pi))
-Gait.AMBLE  = Gait("AMBLE", (np.pi/2, 3*np.pi/2, 0.0, np.pi))
+Gait.AMBLE  = Gait("AMBLE",  (np.pi/2, 3*np.pi/2, 0.0, np.pi))
 Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0, 0.6*np.pi))
 Gait.GALLOP = Gait("GALLOP", (0.0, 0.2*np.pi, 0.8*np.pi, np.pi))
 
@@ -173,15 +143,16 @@ class RobotInterface:
         self._duty_factor: float = duty_factor  # fraction of the cycle spent in stance (0–1)
         self._initialized = True
         self._dt = None
-        self.enable_cpg = True
-        self.cpg_alpha = 0.0
-        self.cpg_transition_speed = 0.5
-        self.body_velocity = 0.0
-        self.target_speed = 0.5
+        self._enable_cpg = True
+        self._cpg_alpha = 0.0
+        self._cpg_transition_speed = 0.5
+        self._body_velocity = 0.0
+        self._target_speed = 0.5
         # Neutral default so the fuzzy controller has a sane input until a real
         # stability estimator is wired up. 0.75 falls in the 'stable' band.
-        self.stability_metric = 0.75
-
+        self._stability_metric = 0.75
+        self._current_traj_params = None
+        self._next_traj_params = None
     
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
@@ -190,6 +161,24 @@ class RobotInterface:
     @trajectory_method.setter
     def trajectory_method(self, method: 'TrajectoryMethod'):
         self._trajectory_method = method
+
+    @property
+    def stability_metric(self) -> float:
+        return self._stability_metric
+    
+    @stability_metric.setter
+    def stability_metric(self, value: float):
+        if not (0.0 <= value <= 1.0):
+            raise ValueError("Stability metric must be between 0.0 and 1.0")
+        self._stability_metric = value
+
+    @property
+    def current_traj_params(self):
+        return self._current_traj_params
+    
+    @current_traj_params.setter
+    def current_traj_params(self, params):
+        self._current_traj_params = params
 
     @property
     def duty_factor(self) -> float:
@@ -210,8 +199,31 @@ class RobotInterface:
         self._dt = value
 
     @property
+    def current_state(self) -> State:
+        return self.robot_state.current_state if self.robot_state else None
+
+    @current_state.setter
+    def current_state(self, state: State):
+        self.update_state(state)
+    
+    @property
+    def next_state(self) -> State:
+        return self.robot_state.next_state if self.robot_state else None
+    
+    @next_state.setter
+    def next_state(self, state: State):
+        if self.robot_state:
+            self.robot_state.next_state = state
+        else:
+            raise ValueError("Cannot set next state without an existing robot state. Please initialize the robot state first.")
+
+    @property
     def current_gait(self) -> Gait:
         return self.robot_state.current_state.gait if self.robot_state else None
+    
+    @current_gait.setter
+    def current_gait(self, gait: Gait):
+        self.update_gait(gait)
     
     @property
     def next_gait(self) -> Gait:
@@ -223,16 +235,14 @@ class RobotInterface:
             self.robot_state.next_state = State(mode=self.robot_state.current_state.mode, gait=gait, frequency=self.robot_state.current_state.frequency)
         else:
             raise ValueError("Cannot set next gait without an existing robot state. Please initialize the robot state first.")
+
     @property
     def current_mode(self) -> Mode:
         return self.robot_state.current_state.mode if self.robot_state else None
 
     @current_mode.setter
     def current_mode(self, mode: Mode):
-        if self.robot_state:
-            self.robot_state.current_state.mode = mode
-        else:
-            raise ValueError("Cannot set current mode without an existing robot state. Please initialize the robot state first.")
+        self.update_mode(mode)
 
     @property
     def frequency(self) -> float:
@@ -242,6 +252,15 @@ class RobotInterface:
     @frequency.setter
     def frequency(self, value: float):
         self.robot_state.current_state.frequency = float(value)
+
+    @property
+    def next_frequency(self) -> float:
+        """Next CPG frequency in Hz. Settable: robot_interface.next_frequency = 2.0"""
+        return self.robot_state.next_state.frequency if self.robot_state else 0.0
+
+    @next_frequency.setter
+    def next_frequency(self, value: float):
+        self.robot_state.next_state.frequency = float(value)
 
     @property
     def current_state(self) -> State:
@@ -366,6 +385,22 @@ class RobotInterface:
     @cpg_transition_speed.setter
     def cpg_transition_speed(self, value: float):
         self._cpg_transition_speed = value
+    
+    @property
+    def body_velocity(self) -> float:
+        return self._body_velocity
+
+    @body_velocity.setter
+    def body_velocity(self, value: float):
+        self._body_velocity = value
+    
+    @property
+    def target_speed(self) -> float:
+        return self._target_speed
+    
+    @target_speed.setter
+    def target_speed(self, value: float):
+        self._target_speed = value
 
     def update_mode(self, new_mode: Mode):
         if self.robot_state:
@@ -384,16 +419,18 @@ class RobotInterface:
     def update_state(self, new_state: State = None):
         """Update the robot's state. If new_state is None, it will attempt to use the next_state 
         from the current RobotState, if this fails it will raise a ValueError."""
+        if self.robot_state is None:
+            raise ValueError("Cannot update state without an existing robot state. Please initialize the robot state first.")
+        
         if new_state is None:
             new_state = self.robot_state.next_state if self.robot_state else None
-            self.robot_state.next_state = None
-            if new_state is None:
-                raise ValueError("No new state provided and no next state available.")
-        
-        if self.robot_state:
-            self.robot_state.previous_state = self.robot_state.current_state
 
+            if new_state is None:
+                new_state = self.robot_state.current_state if self.robot_state else None
+        
+        self.robot_state.previous_state = self.robot_state.current_state
         self.robot_state.current_state = new_state
+        self.robot_state.next_state = None
 
     def set_next_state(self, next_state: State):
         if self.robot_state:
