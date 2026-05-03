@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
 
+# import os, sys 
+# sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# from logger.logger_config import logger
+
 # Define gait phases for each foot in the order: FL, FR, RL, RR
 class Gait:
     _registry = {}
@@ -37,6 +41,20 @@ Gait.TROT   = Gait("TROT",   (0.0, np.pi, 0.0, np.pi))
 Gait.AMBLE  = Gait("AMBLE",  (np.pi/2, 3*np.pi/2, 0.0, np.pi))
 Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0, 0.6*np.pi))
 Gait.GALLOP = Gait("GALLOP", (0.0, 0.2*np.pi, 0.8*np.pi, np.pi))
+
+ALL_GAITS = [Gait.WALK, Gait.AMBLE, Gait.TROT, Gait.CANTER, Gait.GALLOP]
+
+# Nominal CPG frequency per gait (Hz). Used by fuzzy/transition logic to
+# populate `next_frequency` whenever a target gait is staged. These are
+# defaults — overrides come from the frontend (see app/gait_settings.py),
+# which the GUI tuner can edit per-gait.
+GAIT_NOMINAL_FREQUENCY: dict[Gait, float] = {
+    Gait.WALK:   1.4,
+    Gait.AMBLE:  1.6,
+    Gait.TROT:   1.95,
+    Gait.CANTER: 2.5,
+    Gait.GALLOP: 3.0,
+}
 
 class Mode(Enum):
     MOVING = 1
@@ -147,7 +165,7 @@ class RobotInterface:
         self._cpg_alpha = 0.0
         self._cpg_transition_speed = 0.5
         self._body_velocity = 0.0
-        self._target_speed = 0.5
+        self._target_speed = 0.2
         # Neutral default so the fuzzy controller has a sane input until a real
         # stability estimator is wired up. 0.75 falls in the 'stable' band.
         self._stability_metric = 0.75
@@ -175,10 +193,25 @@ class RobotInterface:
     @property
     def current_traj_params(self):
         return self._current_traj_params
-    
+
     @current_traj_params.setter
     def current_traj_params(self, params):
         self._current_traj_params = params
+
+    @property
+    def next_traj_params(self):
+        """Trajectory params (e.g. EllipsoidConfig) staged for the next gait.
+
+        Set by the layer that decides a transition (typically
+        ``FuzzyController`` driving ``GaitPicker``); read by
+        ``FuzzyGaitSwitch.blend_trajectories`` while the blend integrates.
+        ``None`` means "no transition staged".
+        """
+        return self._next_traj_params
+
+    @next_traj_params.setter
+    def next_traj_params(self, params):
+        self._next_traj_params = params
 
     @property
     def duty_factor(self) -> float:
@@ -255,11 +288,27 @@ class RobotInterface:
 
     @property
     def next_frequency(self) -> float:
-        """Next CPG frequency in Hz. Settable: robot_interface.next_frequency = 2.0"""
-        return self.robot_state.next_state.frequency if self.robot_state else 0.0
+        """Next CPG frequency in Hz. Settable: robot_interface.next_frequency = 2.0
+
+        Returns 0.0 when no transition is staged (i.e. ``next_state`` is
+        ``None``); callers that care about "is there a target?" should
+        check ``robot_state.next_state`` rather than this scalar.
+        """
+        if self.robot_state is None or self.robot_state.next_state is None:
+            return 0.0
+        return self.robot_state.next_state.frequency
 
     @next_frequency.setter
     def next_frequency(self, value: float):
+        # Setting next_frequency in isolation is meaningless without a
+        # next_state to attach it to; require next_gait to be set first
+        # (which creates next_state via its own setter) so the contract is
+        # explicit instead of silently lost.
+        if self.robot_state is None or self.robot_state.next_state is None:
+            raise ValueError(
+                "Cannot set next_frequency without a staged next_state. "
+                "Set robot_interface.next_gait first."
+            )
         self.robot_state.next_state.frequency = float(value)
 
     @property

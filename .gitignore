@@ -58,5 +58,6 @@ python/pd/__pycache__/*
 python/controllers/__pycache__/*
 python/inverse_kinematics/__pycache__/*
 python/shared_module/__pycache__/*
+python/fuzzy_logic/__pycache__/*
 
 !python/sim/go2/assets/*

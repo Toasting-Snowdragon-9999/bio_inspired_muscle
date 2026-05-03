@@ -203,11 +203,15 @@ class IKController:
     def estimate_body_velocity(self):
         v_estimates = []
 
+        # get_phase_outputs() returns a np.ndarray of shape (4,) ordered to
+        # match the Foot enum (FL, FR, RL, RR — see shared_module.robot_state).
+        # Index it by the enumerate() position, NOT by the Foot enum itself,
+        # otherwise numpy raises IndexError for non-integer keys.
         phase_outputs = self.cpg.get_phase_outputs()
         duty = self.robot_interface.duty_factor
 
-        for foot in Foot:
-            phase = phase_outputs[foot]
+        for i, foot in enumerate(Foot):
+            phase = phase_outputs[i]
 
             if phase > 2.0 * np.pi * duty:
                 continue

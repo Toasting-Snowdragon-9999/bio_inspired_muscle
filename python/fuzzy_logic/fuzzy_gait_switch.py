@@ -7,7 +7,7 @@ from skfuzzy import control as ctrl
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared_module.robot_state import Gait, Mode, RobotInterface, State
+from shared_module.robot_state import Gait, Mode, RobotInterface, State, ALL_GAITS
 from logger.logger_config import logger
 
 MAX_VELOCITY = 1.0
@@ -140,6 +140,10 @@ class FuzzyGaitSwitch:
         self.blend_rate = ctrl.Consequent(np.arange(0.0, 1.01, 0.01), 'blend_rate')
         self.blending_factor = 0.0  # Initialize blending factor
 
+
+        self._origin_gait: 'Gait | None' = None
+        self._target_gait: 'Gait | None' = None
+
         self.stability['very_unstable'] = fuzz.trapmf(self.stability.universe, [0.0, 0.0, 0.2, 0.4])
         self.stability['unstable']      = fuzz.trimf(self.stability.universe, [0.3, 0.5, 0.7])
         self.stability['stable']        = fuzz.trimf(self.stability.universe, [0.6, 0.75, 0.9])
@@ -171,11 +175,7 @@ class FuzzyGaitSwitch:
         self.very_unstable_rule1 = ctrl.Rule(self.speed_error['low'] & self.stability['very_unstable'], self.blend_rate['backward_slow'])
         self.very_unstable_rule2 = ctrl.Rule(self.speed_error['medium'] & self.stability['very_unstable'], self.blend_rate['backward_fast'])
         self.very_unstable_rule3 = ctrl.Rule(self.speed_error['high'] & self.stability['very_unstable'], self.blend_rate['backward_fast'])
-        
-        # Define the system — collect every Rule defined above into one
-        # ControlSystem and store the simulation on `self` so update() can
-        # drive it. (Previously this was a local with a typo'd rule list,
-        # which is why `self.fuzzy_sim` didn't exist at update time.)
+
         all_rules = [
             self.high_stability_rule1, self.high_stability_rule2, self.high_stability_rule3,
             self.stability_rule1,      self.stability_rule2,      self.stability_rule3,
@@ -186,8 +186,6 @@ class FuzzyGaitSwitch:
         self.fuzzy_sim = ctrl.ControlSystemSimulation(self.fuzzy_ctrl)
 
     def show_membership_functions(self):
-        # Lazy import: matplotlib.pyplot is heavy and binds a backend on first
-        # import, so keep it out of module scope.
         import matplotlib.pyplot as plt
         self.stability.view()
         self.speed_error.view()
@@ -218,61 +216,179 @@ class FuzzyGaitSwitch:
         return blended
 
     def blend_trajectories(self, old_traj_params, new_traj_params, blending_factor) -> Any:
-        new_traj_params = {}
-        for key in old_traj_params.keys():
-            old_val = old_traj_params[key]
-            new_val = new_traj_params[key]
-            blended_val = self.interpolate(old_val, new_val, blending_factor)
-            new_traj_params[key] = blended_val
-        return new_traj_params
+        if old_traj_params is None and new_traj_params is None:
+            return None
+        if new_traj_params is None:
+            return old_traj_params
+        if old_traj_params is None:
+            return new_traj_params
 
-    def update(self, dt: float) -> Gait:
-        # `dt` is the elapsed time since the last call — when driven from a
-        # decimated tick this is the accumulated dt (decimated_steps * sim_dt),
-        # NOT the underlying sim timestep.
-        current_gait = self.robot_interface.current_gait
-        # `next_gait` accessor crashes when next_state is None (it does
-        # `next_state.gait` unconditionally), so guard at the source instead.
-        next_state = self.robot_interface.robot_state.next_state if self.robot_interface.robot_state else None
+        # Dataclass path (e.g. EllipsoidConfig): blend each declared field.
+        from dataclasses import is_dataclass, fields, replace
+        if is_dataclass(old_traj_params) and is_dataclass(new_traj_params):
+            blended_kwargs = {}
+            for f in fields(old_traj_params):
+                a = getattr(old_traj_params, f.name)
+                b = getattr(new_traj_params, f.name, a)
+                blended_kwargs[f.name] = self.interpolate(float(a), float(b), blending_factor)
+            return replace(old_traj_params, **blended_kwargs)
 
+        # Dict path: iterate the old keys; missing keys in `new` fall back
+        # to old's value so we never KeyError mid-blend.
+        if isinstance(old_traj_params, dict):
+            blended = {}
+            for key, old_val in old_traj_params.items():
+                new_val = new_traj_params.get(key, old_val) if isinstance(new_traj_params, dict) else old_val
+                blended[key] = self.interpolate(float(old_val), float(new_val), blending_factor)
+            return blended
+
+        # Unknown shape — return old to keep the system stable rather than
+        # crashing the control loop.
+        return old_traj_params
+
+    @property
+    def is_transitioning(self) -> bool:
+        """``True`` while a gait transition is mid-blend (factor in (0, 1))."""
+        return self._target_gait is not None
+
+    def update(self, dt: float) -> tuple:
+
+        ri = self.robot_interface
+
+        # ----- branch 1: already mid-transition. Keep stepping the locked target.
+        if self.is_transitioning:
+            return self._step_transition(dt)
+
+        current_gait = ri.current_gait
+        current_traj = ri.current_traj_params
+        current_freq = ri.frequency
+
+        next_state = ri.robot_state.next_state if ri.robot_state else None
         target_gait = next_state.gait if next_state is not None else None
 
         if target_gait is None or current_gait == target_gait:
-            if self.robot_interface.current_mode == Mode.TRANSITION:
-                self.robot_interface.update_mode(Mode.MOVING)
-            return current_gait
+    
+            if ri.current_mode == Mode.TRANSITION:
+                ri.update_mode(Mode.MOVING)
+            return current_gait, current_traj, current_freq, True
 
-        self.robot_interface.update_mode(Mode.TRANSITION)
-        robot_vel = self.robot_interface.body_velocity
-        speed_error_in = self.robot_interface.target_speed - self.robot_interface.body_velocity
-        stability_in = self.robot_interface.stability_metric
-        self.fuzzy_sim.input['speed_error'] = speed_error_in
-        self.fuzzy_sim.input['stability'] = stability_in
+        self._origin_gait = current_gait
+        self._target_gait = target_gait
+        self.blending_factor = 0.0
+        return self._step_transition(dt)
 
+    def _step_transition(self, dt: float) -> tuple:
+
+        ri = self.robot_interface
+        if ri.current_mode != Mode.TRANSITION:
+            ri.update_mode(Mode.TRANSITION)
+
+        speed_error_in = 0.0 #ri.target_speed - ri.body_velocity
+        stability_in = ri.stability_metric
+
+        self.fuzzy_sim.input['speed_error'] = float(np.clip(abs(speed_error_in), 0.0, 1.0))
+        self.fuzzy_sim.input['stability'] = float(np.clip(stability_in, 0.0, 1.0))
         self.fuzzy_sim.compute()
-        blend_rate_output = self.fuzzy_sim.output['blend_rate']
+        blend_rate_output = float(self.fuzzy_sim.output['blend_rate'])
         blending_factor = self.update_blending_factor(blend_rate_output, dt)
-        gait_params = self.blend_gaits(self.robot_interface.current_gait, target_gait, blending_factor)
-        traj_params = self.blend_trajectories(self.robot_interface.current_traj_params, self.robot_interface.next_traj_params, blending_factor)
-        frequency = self.interpolate(self.robot_interface.frequency, self.robot_interface.next_frequency, blending_factor)
-        return gait_params, traj_params, frequency
+
+        gait_blend = self.blend_gaits(self._origin_gait, self._target_gait, blending_factor)
+        traj_blend = self.blend_trajectories(
+            ri.current_traj_params, ri.next_traj_params, blending_factor,
+        )
+
+        next_freq = ri.next_frequency
+        freq_blend = self.interpolate(ri.frequency, next_freq, blending_factor) if next_freq else ri.frequency
+
+        if blending_factor >= 1.0:
+
+            committed_gait = self._target_gait
+            self._origin_gait = None
+            self._target_gait = None
+            self.blending_factor = 0.0
+            ri.update_mode(Mode.MOVING)
+            return committed_gait, ri.next_traj_params or traj_blend, next_freq or freq_blend, True
+
+        return gait_blend, traj_blend, freq_blend, False
 
 class FuzzyController:
-    def __init__(self, robot_interface: RobotInterface):
+    """Orchestrator: GaitPicker chooses a target, FuzzyGaitSwitch blends toward it.
+
+    ``params_for_gait`` and ``freq_for_gait`` are optional callables the
+    integrator (typically the GUI frontend) can supply so this controller
+    can populate ``robot_interface.next_traj_params`` /
+    ``next_frequency`` whenever a target gait is staged. Without them the
+    fuzzy switch would have no data to blend toward, leaving the
+    transition stuck on whatever the IK builder last wrote. Defaults are
+    ``None`` so existing call sites keep working — just without staged
+    blending.
+    """
+
+    def __init__(
+        self,
+        robot_interface: RobotInterface,
+        params_for_gait=None,   # callable: Gait -> EllipsoidConfig|dict|None
+        freq_for_gait=None,     # callable: Gait -> float|None
+        duty_for_gait=None,     # callable: Gait -> float|None
+    ):
         self.robot_interface = robot_interface
         self.gait_picker = GaitPicker()
         self.fuzzy_gait_switch = FuzzyGaitSwitch(robot_interface)
+        self.params_for_gait = params_for_gait
+        self.freq_for_gait = freq_for_gait
+        self.duty_for_gait = duty_for_gait
+
+        self._origin_duty: 'float | None' = None
+        self._target_duty: 'float | None' = None
 
     def update(self, dt: float) -> None:
+        ri = self.robot_interface
 
-        vel_cmd = VelCmd(self.robot_interface.target_speed)
-        current_state = self.robot_interface.robot_state
-        transition_gait = self.gait_picker.pick_gait(vel_cmd, self.robot_interface.current_gait)
-        self.robot_interface.next_gait = transition_gait
-        new_gait, new_traj, new_freq = self.fuzzy_gait_switch.update(dt)
-        self.robot_interface.current_gait = new_gait
-        self.robot_interface.current_traj_params = new_traj
-        self.robot_interface.frequency = new_freq
+        if not self.fuzzy_gait_switch.is_transitioning:
+            vel_cmd = VelCmd(ri.target_speed)
+            transition_gait = self.gait_picker.pick_gait(vel_cmd, ri.current_gait)
+            ri.next_gait = transition_gait
+
+            if self.params_for_gait is not None:
+                try:
+                    ri.next_traj_params = self.params_for_gait(transition_gait)
+                except Exception:
+                    # Defensive: don't let a missing-gait lookup kill the loop.
+                    pass
+            if self.freq_for_gait is not None:
+                try:
+                    staged_freq = self.freq_for_gait(transition_gait)
+                    if staged_freq is not None:
+                        ri.next_frequency = float(staged_freq)
+                except Exception:
+                    pass
+
+            if self.duty_for_gait is not None:
+                try:
+                    target_duty = self.duty_for_gait(transition_gait)
+                    if target_duty is not None:
+                        self._origin_duty = float(ri.duty_factor)
+                        self._target_duty = float(target_duty)
+                except Exception:
+                    pass
+
+        new_gait, new_traj, new_freq, committed = self.fuzzy_gait_switch.update(dt)
+
+
+        if new_traj is not None:
+            ri.current_traj_params = new_traj
+        if new_freq:
+            ri.frequency = new_freq
+
+
+        if committed and new_gait is not None:
+            ri.current_gait = new_gait
+
+        if self._target_duty is not None and self._origin_duty is not None:
+            if not self.fuzzy_gait_switch.is_transitioning and committed:
+                ri.duty_factor = self._target_duty
+                self._origin_duty = None
+                self._target_duty = None
 
 def test_fuzzy_gait_switch():
     """Observe the WALK -> AMBLE fuzzy gait transition over 1 second.
@@ -328,7 +444,10 @@ def test_fuzzy_gait_switch():
         t = (i + 1) * dt
         logger.debug("-" * 80)
         logger.debug(f"[step {i+1:02d}/{n_steps}] t={t:.3f}s")
-        blended_gait = fuzzy.update(dt)
+        # FuzzyGaitSwitch.update now always returns a 4-tuple
+        # (gait, traj_params, frequency, committed). The test only
+        # inspects the blended gait, so unpack and ignore the rest.
+        blended_gait, _blended_traj, _blended_freq, _committed = fuzzy.update(dt)
         logger.debug(
             f"[step {i+1:02d}] post-update: blending_factor={fuzzy.blending_factor:.4f}, "
             f"blended_phases={tuple(round(x, 4) for x in blended_gait.value)}, "

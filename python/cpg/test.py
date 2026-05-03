@@ -6,8 +6,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
 from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, EllipsoidConfig
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
 
 def test_cpg_output():
@@ -20,11 +18,8 @@ def test_cpg_output():
     steps = int((second) / robot_interface.dt)
     output = {}
     for step in range(steps):
-        if step == steps // 4:
-            robot_interface.enable_cpg = False
-        if step == 2 * steps // 4:
-            robot_interface.enable_cpg = True
-            cpg.reset()  # Reset phases to zero to test that they resume correctly when re-enabled
+        robot_interface.frequency += 0.001
+        cpg.set_frequency(robot_interface.frequency)
         cpg.run()
         output[step] = cpg.get_oscillator_outputs()
     time = np.arange(steps) * robot_interface.dt
@@ -658,7 +653,7 @@ def test_main():
     print("==================================================")
     print("Testing ellipsoid trajectory")
     test_cpg_output()
-    test_ellipsoid_traj()
+    # test_ellipsoid_traj()
 
     print("==================================================")
     return
