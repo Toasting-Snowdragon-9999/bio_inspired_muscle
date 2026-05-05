@@ -63,6 +63,23 @@ class EllipsoidConfig:
     rear_rotation: float = 0.0
     rear_skew:     float = 0.0
 
+class GaitScheduler:
+    def __init__(self, robot_interface):
+        self.robot_interface = robot_interface
+
+    def compute(self, phases):
+        duty = self.robot_interface.duty_factor
+        contact = {}
+        phase_norm = {}
+
+        for i, foot in enumerate(NEURON_TO_FOOT_DICT.values()):
+            phi = (phases[i] % (2*np.pi)) / (2*np.pi)
+
+            phase_norm[foot] = phi
+            contact[foot] = 1 if phi < duty else 0
+
+        return phase_norm, contact
+
 class TrajectoryBuilder:
     def __init__(
         self,
@@ -182,124 +199,108 @@ class TrajectoryBuilder:
         )
         return foot_positions_hip
 
-    def build_egg_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-        """Convert CPG neuron outputs (phases) to Cartesian foot positions in the hip-local frame.\n
-           Make sure the foot_position in RobotInterface is initialized before calling this."""
-        foot_positions = {}
+    def new_build_ellipsoid_trajectory(
+        self,
+        phase_norm: dict[Foot, float],
+        contact: dict[Foot, int],   # still passed (useful later for force)
+        neuron_phase_velocities: np.ndarray
+    ) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
 
-        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
-            theta = neuron_output[neuron_idx]
-            theta = self.apply_duty_factor(theta)  # <-- IMPORTANT: apply duty factor to phase before computing trajectory
-            y = 0.0  # Keep the current y position unchanged
-            x = - self.width[foot] * np.cos(theta)
-
-            s = np.sin(theta)
-            # Smooth blend between swing (height) and stance (stance_depth) amplitudes
-            # to eliminate velocity discontinuity at foot landing (tanh sigmoid: 1 in swing, 0 in stance)
-            blend = 0.5 * (1.0 + np.tanh(self.blend_sharpness * s))
-            z_amp = blend * self.height[foot] + (1.0 - blend) * self.stance_depth
-            z = z_amp * s
-
-            # z = self.height[foot] * max(0.0, np.sin(theta))
-            foot_positions[foot] = Coordinate(x, y, z)
-
-        foot_positions = self.transform_relative_world_to_hip(foot_positions)
-        foot_velocities = self.compute_target_velocities(neuron_output, neuron_phase_velocities)
-        return foot_positions, foot_velocities
-
-    def build_oval_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-        assert self.oval_offsets is not None, "oval_offsets must be set before calling build_oval_trajectory"
+        assert self.ellipsoid_config is not None
 
         FRONT_FEET = {Foot.FL, Foot.FR}
-        foot_positions: dict[Foot, Coordinate] = {}
-        foot_velocities: dict[Foot, Coordinate] = {}
+        cfg = self.robot_interface.current_traj_params
+        duty = self.robot_interface.duty_factor
+
+        foot_positions = {}
+        foot_velocities = {}
+
+        # Smoothness of stance↔swing transition
+        k = 20.0  # increase = sharper transition
 
         for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
-            theta     = neuron_output[neuron_idx]
-            theta = self.apply_duty_factor(theta)  # <-- IMPORTANT: apply duty factor to phase before computing trajectory
+
+            phi = phase_norm[foot]                 # ∈ [0,1]
             theta_dot = neuron_phase_velocities[neuron_idx]
-            # if foot in {Foot.RL, Foot.RR}:
-            #     theta += np.pi
-            self.blend_sharpness = 7.0
-
-            # --- phase warping (THIS fixes your problem) ---
-            p = 1.8
-
-            phi = (theta % (2*np.pi)) / (2*np.pi)   # normalize phase [0,1]
-            phi_warped = phi ** p                   # warp phase
-
-            theta_warped = phi_warped * 2*np.pi     # back to radians
-
-            c = np.cos(theta)
-            s = np.sin(theta)
+            dphi_dt = theta_dot / (2 * np.pi)
 
             is_front = foot in FRONT_FEET
-            if is_front:
-                x_fore = self.oval_offsets[OvalOffset.X_FFORE]
-                x_hind = self.oval_offsets[OvalOffset.X_FHIND]
-                z_top  = self.oval_offsets[OvalOffset.Z_FTOP]
-                z_bot  = self.oval_offsets[OvalOffset.Z_FBOTTOM]
-            else:
-                x_fore = self.oval_offsets[OvalOffset.X_RFORE]
-                x_hind = self.oval_offsets[OvalOffset.X_RHIND]
-                z_top  = self.oval_offsets[OvalOffset.Z_RTOP]
-                z_bot  = self.oval_offsets[OvalOffset.Z_RBOTTOM]
 
-            # ── Smooth blends ─────────────────────────────────────────────
-            # Front/back transition (based on cos)
-            # blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness-6.9 * (-c)))
-            blend_x = 0.5 * (1.0 + np.tanh(self.blend_sharpness-5 * (phi - 0.5)))
-            x_amp = blend_x * x_fore + (1.0 - blend_x) * x_hind
+            x_fore   = cfg.front_x_fore   if is_front else cfg.rear_x_fore
+            x_hind   = cfg.front_x_hind   if is_front else cfg.rear_x_hind
+            z_top    = cfg.front_z_top    if is_front else cfg.rear_z_top
+            z_bottom = cfg.front_z_bottom if is_front else cfg.rear_z_bottom
+            rotation = cfg.front_rotation if is_front else cfg.rear_rotation
+            skew     = cfg.front_skew     if is_front else cfg.rear_skew
 
-            # Swing/stance transition (based on sin)
-            blend_z = 0.5 * (1.0 + np.tanh(self.blend_sharpness * s))
-            z_amp = blend_z * z_top + (1.0 - blend_z) * z_bot
+            # ─────────────────────────────────────────────
+            # Smooth stance/swing blending weight
+            # ─────────────────────────────────────────────
+            w_stance = 0.5 * (1.0 - np.tanh(k * (phi - duty)))
+            w_swing  = 1.0 - w_stance
 
-            # ── Position ─────────────────────────────────────────────────
-            # x = -x_amp * c
-            direction = 1.0 if foot in FRONT_FEET else -1.0
-            x = - direction * x_amp * c
+            # ─────────────────────────────────────────────
+            # STANCE trajectory
+            # ─────────────────────────────────────────────
+            phi_stance = np.clip(phi / duty, 0.0, 1.0)
 
-            # normal ellipse AFTER warping
-            # x = -x_amp * c
+            x_stance = x_fore - (x_fore + x_hind) * phi_stance
+            z_stance = -z_bottom
 
-            c = np.cos(theta_warped)
-            s = np.sin(theta_warped)
+            dx_stance_dphi = -(x_fore + x_hind) / duty
+            dz_stance_dphi = 0.0
 
-            z =  z_amp * s
+            # ─────────────────────────────────────────────
+            # SWING trajectory
+            # ─────────────────────────────────────────────
+            phi_swing = np.clip((phi - duty) / (1.0 - duty), 0.0, 1.0)
 
-            foot_positions[foot] = Coordinate(x, 0.0, z)
+            x_swing = -x_hind + (x_fore + x_hind) * phi_swing
+            z_swing = z_top * np.sin(np.pi * phi_swing)
 
-            # ── Derivatives (IMPORTANT: include dA/dθ) ────────────────────
-            # tanh'(x) = 1 - tanh²(x)
-            sech2_x = 1.0 - np.tanh(self.blend_sharpness * (-c))**2
-            sech2_z = 1.0 - np.tanh(self.blend_sharpness * s)**2
+            dx_swing_dphi = (x_fore + x_hind) / (1.0 - duty)
+            dz_swing_dphi = (
+                z_top * np.pi * np.cos(np.pi * phi_swing) / (1.0 - duty)
+            )
 
-            dblend_x_dtheta = 0.5 * self.blend_sharpness * sech2_x * (s)
-            dblend_z_dtheta = 0.5 * self.blend_sharpness * sech2_z * (c)
+            # ─────────────────────────────────────────────
+            # Blend positions
+            # ─────────────────────────────────────────────
+            x = w_stance * x_stance + w_swing * x_swing
+            z = w_stance * z_stance + w_swing * z_swing
 
-            dx_amp_dtheta = dblend_x_dtheta * (x_fore - x_hind)
-            dz_amp_dtheta = dblend_z_dtheta * (z_top  - z_bot)
+            # ─────────────────────────────────────────────
+            # Blend velocities (ignore weight derivatives → stable enough)
+            # ─────────────────────────────────────────────
+            dx_dphi = w_stance * dx_stance_dphi + w_swing * dx_swing_dphi
+            dz_dphi = w_stance * dz_stance_dphi + w_swing * dz_swing_dphi
 
-            # Full derivatives
-            dx = (x_amp * s + dx_amp_dtheta * (-c)) * theta_dot
-            # dz = (z_amp * c + dz_amp_dtheta * s) * theta_dot
-            dphi_dtheta = 1 / (2*np.pi)
-            dphi_warped_dtheta = p * (phi ** (p - 1)) * dphi_dtheta
+            dx = dx_dphi * dphi_dt
+            dz = dz_dphi * dphi_dt
 
-            dtheta_warped_dtheta = 2*np.pi * dphi_warped_dtheta
+            # ─────────────────────────────────────────────
+            # Rotation
+            # ─────────────────────────────────────────────
+            ca, sa = np.cos(rotation), np.sin(rotation)
 
-            dz = (
-                z_amp * np.cos(theta_warped) * dtheta_warped_dtheta +
-                dz_amp_dtheta * s
-            ) * theta_dot
+            x_r = x * ca - z * sa
+            z_r = x * sa + z * ca
 
-            foot_velocities[foot] = Coordinate(dx, 0.0, dz)
+            dx_r = dx * ca - dz * sa
+            dz_r = dx * sa + dz * ca
+
+            # ─────────────────────────────────────────────
+            # Skew
+            # ─────────────────────────────────────────────
+            x_s = x_r + skew
+            z_s = z_r
+
+            foot_positions[foot] = Coordinate(x_s, 0.0, z_s)
+            foot_velocities[foot] = Coordinate(dx_r, 0.0, dz_r)
 
         foot_positions = self.transform_relative_world_to_hip(foot_positions)
         return foot_positions, foot_velocities
-    
-    
+
     def build_ellipsoid_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """
         Asymmetric ellipsoid foot trajectory with independent front/rear parameters,
@@ -414,22 +415,27 @@ class TrajectoryBuilder:
         return foot_positions, foot_velocities
 
 
-    def build_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
+    def build_trajectory(
+        self,
+        neuron_phase: dict[Foot, float],
+        neuron_phase_velocities: np.ndarray,
+    ) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """Unified entry point — dispatches based on robot_interface.trajectory_method.
-        Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER"""
+        Switch shape at any time: robot_interface.trajectory_method = TrajectoryMethod.BEZIER
+
+        Inputs are produced by GaitScheduler.compute(phase_outputs):
+          - phase_norm[foot]: normalised phase ∈ [0, 1)
+          - contact[foot]:    1 if foot is in stance (phi < duty), else 0
+        """
         method = self.robot_interface.trajectory_method
         foot_positions: dict[Foot, Coordinate]
         foot_velocities: dict[Foot, Coordinate]
-    
-        if method is TrajectoryMethod.OVAL:
-            foot_positions, foot_velocities = self.build_oval_trajectory(neuron_output, neuron_phase_velocities)
 
-        elif method is TrajectoryMethod.ELLIPSOID:
-            foot_positions, foot_velocities = self.build_ellipsoid_trajectory(neuron_output, neuron_phase_velocities)
+        if method is TrajectoryMethod.ELLIPSOID:
+            foot_positions, foot_velocities = self.build_ellipsoid_trajectory(
+                neuron_phase, neuron_phase_velocities
+            )
 
-        else:  # TrajectoryMethod.EGG (default)
-            foot_positions, foot_velocities = self.build_egg_trajectory(neuron_output, neuron_phase_velocities)
-        
         return self.apply_cpg_blending(foot_positions, foot_velocities)
 
     def apply_cpg_blending(

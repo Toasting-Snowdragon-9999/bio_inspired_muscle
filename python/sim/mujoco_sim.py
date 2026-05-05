@@ -62,6 +62,14 @@ class MujocoSim:
         self._robot_mass = None
         self.use_bias_compensation = True
 
+        # geom-id → Foot map for actual-contact detection. Built lazily on the
+        # first call to `_sync_robot_interface` because the model is parsed
+        # before MuJoCo finishes assigning ids in some test paths. See
+        # `_ensure_foot_geom_map` below — used to populate
+        # `robot_interface.contact` (the actual-contact mirror of
+        # `expected_footfall`) every mj_step.
+        self._foot_geom_to_foot: dict[int, Foot] = {}
+
     def get_model_and_data(self):
         return self.model, self.data
 
@@ -333,6 +341,23 @@ class MujocoSim:
 
     # ── Robot-interface synchronisation ──────────────────────────
 
+    def _ensure_foot_geom_map(self) -> None:
+        """Lazily build geom-id → Foot map. Called once on first sync.
+
+        Walks every geom in the model, looks up its parent body, and if that
+        body's name matches one of the `Foot` enum values (e.g. 'FL_foot'),
+        records the geom id. Robust to models with multiple geoms per foot
+        body — every such geom counts as a foot-contact source.
+        """
+        if self._foot_geom_to_foot:
+            return
+        body_to_foot = {foot.value: foot for foot in Foot}
+        for geom_id in range(self.model.ngeom):
+            body_id = int(self.model.geom_bodyid[geom_id])
+            body_name = mj.mj_id2name(self.model, mj.mjtObj.mjOBJ_BODY, body_id)
+            if body_name in body_to_foot:
+                self._foot_geom_to_foot[geom_id] = body_to_foot[body_name]
+
     def _sync_robot_interface(self):
         """Copy MuJoCo sensor data → RobotInterface so controllers see fresh state."""
         ri = self.robot_interface
@@ -392,6 +417,21 @@ class MujocoSim:
             ]
             for foot, foot_pos in foot_stance.items()
         }
+
+        # Actual per-foot contact for the RL gait-error reward. We start every
+        # foot at 0 and flip to 1 if any active contact pair touches that
+        # foot's geom — `data.ncon` is the live contact count, `data.contact`
+        # the array of contact records. Cheap O(ncon).
+        self._ensure_foot_geom_map()
+        contact_state = {foot: 0 for foot in Foot}
+        for c_idx in range(self.data.ncon):
+            con = self.data.contact[c_idx]
+            foot = self._foot_geom_to_foot.get(int(con.geom1))
+            if foot is None:
+                foot = self._foot_geom_to_foot.get(int(con.geom2))
+            if foot is not None:
+                contact_state[foot] = 1
+        ri.contact = contact_state
 
     def _apply_controller_targets_directly(self):
         """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
@@ -606,21 +646,34 @@ class MujocoSim:
 
         return self.compute_CoT()
 
+    # Minimum foot-z (m) we want to see during swing. Below this, the
+    # `swing_clearance` reward term penalises the optimiser — discourages
+    # foot-dragging policies that exploit `velocity` without lifting.
+    _SWING_MIN_CLEARANCE = 0.02
+
     def headless_sim_extended(self, controller=None, sim_length: float = 10.0,
                               warmup: float = 2.0) -> dict:
         """
         Run headless simulation and return extended metrics for RL training.
 
         Same warmup → measurement loop as headless_sim(), but also tracks
-        forward velocity, average body tilt (roll + pitch), and survival.
+        forward velocity, average body tilt (roll + pitch), survival, and the
+        per-step gait-quality terms consumed by sim/gait_env.py:_compute_reward
+        (gait_error, slip, swing_clearance, ang_vel). All per-step sums are
+        mean-reduced over `step_count` so the scalar magnitudes stay
+        comparable across `--sim-length` settings.
 
         Returns:
             dict with keys:
-                cot       — Cost of Transport (float or None if robot didn't move)
-                distance  — forward distance travelled during measurement (m)
-                velocity  — average forward velocity during measurement (m/s)
-                avg_tilt  — mean(|roll| + |pitch|) during measurement (rad)
-                survived  — True if body stayed above 0.15 m throughout
+                cot              — Cost of Transport (float or None if robot didn't move)
+                distance         — forward distance travelled during measurement (m)
+                velocity         — average forward velocity during measurement (m/s)
+                avg_tilt         — mean(|roll| + |pitch|) during measurement (rad)
+                survived         — True if body stayed above 0.15 m throughout
+                gait_error       — mean over steps of Σ_foot (contact - expected_footfall)²
+                slip             — mean over steps of Σ_foot |foot_vel_x| while in stance
+                swing_clearance  — mean over steps of Σ_foot max(0, MIN_CLEARANCE - foot_z) while in swing
+                ang_vel          — mean over steps of |base angular velocity| (rad/s)
         """
         if sim_length <= 0:
             raise ValueError("sim_length must be positive for headless_sim_extended.")
@@ -661,6 +714,17 @@ class MujocoSim:
         survived = True
         min_height = 0.15  # body z threshold for "fell over"
 
+        # Per-step gait-quality accumulators. Initialised here (not at
+        # construction) so a single MujocoSim can serve many episodes.
+        gait_error_sum = 0.0
+        slip_sum = 0.0
+        clearance_sum = 0.0
+        ang_vel_sum = 0.0
+        # Previous foot x-positions for finite-difference foot velocity.
+        # Seeded after the first step inside the loop below.
+        prev_foot_x: dict[Foot, float] | None = None
+        dt_sim = self.model.opt.timestep
+
         measure_end = self.data.time + sim_length
         while self.data.time < measure_end:
             mj.mj_step(self.model, self.data)
@@ -680,6 +744,41 @@ class MujocoSim:
             if body_z < min_height:
                 survived = False
 
+            # ── Per-step gait-quality terms ──
+            # `_sync_robot_interface` already wrote `contact`, `expected_footfall`
+            # and `foot_positions` into the RobotInterface for this tick.
+            ri = self.robot_interface
+            actual = ri.contact
+            desired = ri.expected_footfall
+            foot_pos = ri.foot_positions
+
+            cur_foot_x = {foot: foot_pos[foot][0] for foot in Foot if foot in foot_pos}
+
+            for foot in Foot:
+                a = actual.get(foot, 0)
+                d = desired.get(foot, 0)
+                gait_error_sum += (a - d) ** 2
+
+                # Foot vx via backward finite-diff. Skipped on the first tick
+                # (prev_foot_x is None) — slip stays at 0 for that step.
+                if prev_foot_x is not None and foot in prev_foot_x and foot in cur_foot_x:
+                    foot_vx = (cur_foot_x[foot] - prev_foot_x[foot]) / dt_sim
+                    if a == 1:  # only penalise sliding while in stance
+                        slip_sum += abs(foot_vx)
+
+                # Swing clearance: penalty grows as foot dips below the floor
+                # of `_SWING_MIN_CLEARANCE` while in swing. World-z is used.
+                if a == 0 and foot in foot_pos:
+                    foot_z = foot_pos[foot][2]
+                    if foot_z < self._SWING_MIN_CLEARANCE:
+                        clearance_sum += (self._SWING_MIN_CLEARANCE - foot_z)
+
+            prev_foot_x = cur_foot_x
+
+            # Base angular velocity magnitude — qvel[3:6] are the free-joint
+            # rotational dofs in world frame for the floating base.
+            ang_vel_sum += float(np.linalg.norm(self.data.qvel[3:6]))
+
         mj.set_mjcb_control(None)
 
         # Compute metrics
@@ -689,12 +788,24 @@ class MujocoSim:
         velocity = distance / sim_length if sim_length > 0 else 0.0
         avg_tilt = tilt_sum / step_count if step_count > 0 else 0.0
 
+        # Mean-reduce per-step accumulators so reward magnitudes don't scale
+        # with episode length.
+        denom = float(step_count) if step_count > 0 else 1.0
+        gait_error = gait_error_sum / denom
+        slip = slip_sum / denom
+        swing_clearance = clearance_sum / denom
+        ang_vel = ang_vel_sum / denom
+
         return {
             "cot": cot,
             "distance": distance,
             "velocity": velocity,
             "avg_tilt": avg_tilt,
             "survived": survived,
+            "gait_error": gait_error,
+            "slip": slip,
+            "swing_clearance": swing_clearance,
+            "ang_vel": ang_vel,
         }
 
     def keyboard(self, window, key, scancode, act, mods):

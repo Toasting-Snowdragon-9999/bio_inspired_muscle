@@ -3,9 +3,10 @@ import numpy as np
 from dataclasses import dataclass
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from shared_module.global_constants import NEURON_CNT
+from shared_module.global_constants import NEURON_CNT, NEURON_TO_FOOT_DICT
 from shared_module.robot_state import RobotInterface
 from logger.logger_config import logger
+
 
 class KuramotoCpg:
     """
@@ -38,12 +39,12 @@ class KuramotoCpg:
         self.time_passed = 0.0
 
         # Read gait phase offsets and frequency from RobotInterface
-        gait = self.robot_interface.current_gait    
-        if gait is None:
+        self.gait = self.robot_interface.current_gait    
+        if self.gait is None:
             # Remove this when transition is implemented since then the gait can dynamically be set and changed
             raise ValueError("RobotInterface must have a valid gait at CPG initialization.")
         
-        gait_phases = np.array(gait.value)  # 4-tuple (FL, FR, RR, RL)
+        gait_phases = np.array(self.gait.value)  # 4-tuple (FL, FR, RR, RL)
         frequency = self.robot_interface.frequency
 
         # Coupling: all-to-all with uniform strength
@@ -93,6 +94,15 @@ class KuramotoCpg:
                 n.frequency = frequency
         else:
             self.neurons[index].frequency = frequency
+    
+    def set_gait(self, gait) -> None:
+        if self.gait == gait:
+            return
+        self.gait = gait
+        gait_phases = np.array(gait.value)
+        for i, n in enumerate(self.neurons):
+            n.phase = gait_phases[i]
+        self._build_phase_offset_matrix(gait_phases)
 
     # ── Internals ───────────────────────────────────────────────
 

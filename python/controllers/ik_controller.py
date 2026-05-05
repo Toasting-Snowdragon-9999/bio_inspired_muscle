@@ -10,7 +10,7 @@ from cpg.kuramoto_cpg import KuramotoCpg
 from inverse_kinematics.inverse_kin import *
 from shared_module.robot_state import Joint, RobotInterface, Foot, Mode
 from shared_module.global_constants import FOOT_TO_JOINT_DICT
-from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, Coordinate
+from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, Coordinate, GaitScheduler
 from pd.muscle_like_pd import MuscleLikePD
 
 # Maximum joint velocity (rad/s) to prevent aggressive torques from large
@@ -61,7 +61,7 @@ class IKController:
 
         # CPG owns the foot trajectory generation
         self.cpg = KuramotoCpg(robot_interface)
-
+        self.planner = GaitScheduler(robot_interface)
         self.traj_builder = TrajectoryBuilder(robot_interface, width=stride_length, height=step_height, oval_offsets=oval_offset, ellipsoid_config=ellipsoid_config)
 
         self.pd = MuscleLikePD(robot_interface, params=params, use_oiac=use_adaptive_pd)
@@ -117,9 +117,14 @@ class IKController:
 
         # ===== CPG & trajectory =====
         self.cpg.set_frequency(self.robot_interface.frequency)  # Update CPG frequency from robot_interface (settable via property)
+        self.cpg.set_gait(self.robot_interface.current_gait)  # Update CPG gait from robot_interface (settable via property)
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()
+
+        _, contact = self.planner.compute(phase_outputs)
+        self.robot_interface.expected_footfall = contact  # Update contact state in robot_interface for use in PD control and logging
+
         foot_targets, foot_velocities = self.traj_builder.build_trajectory(phase_outputs, phase_velocities)
 
         # Build proper vel dict from dict[Foot, Coordinate] to dict[Foot, np.ndarray]
@@ -206,8 +211,8 @@ class IKController:
         phase_outputs = self.cpg.get_phase_outputs()
         duty = self.robot_interface.duty_factor
 
-        for foot in Foot:
-            phase = phase_outputs[foot]
+        for i, foot in enumerate(Foot):
+            phase = phase_outputs[i]
 
             if phase > 2.0 * np.pi * duty:
                 continue
@@ -237,8 +242,6 @@ class IKController:
             avg_v_body = np.mean(v_estimates, axis=0)
 
             self.robot_interface.body_velocity = float(avg_v_body[0])  # forward velocity only
-
-
 
     def keyboard_callback(self, window, key, scancode, act, mods):
         if act != glfw.PRESS:

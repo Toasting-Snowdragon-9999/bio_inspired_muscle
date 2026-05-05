@@ -22,6 +22,8 @@ Usage:
 import os
 import sys
 import csv
+import json
+import pickle
 import argparse
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -175,12 +177,20 @@ def train_ppo(
     sim_length: float = 5.0,
     warmup: float = 2.0,
     verbose: bool = False,
+    initial_params: dict[str, float] | None = None,
+    curriculum_phase: int = 3,
 ) -> dict[str, float]:
     """Train a PPO agent to optimise gait parameters.
 
     Each episode is a single env.step() that runs a full MuJoCo simulation
     and returns (obs, reward, terminated=True, ...).  PPO explores the 14-D
     normalised parameter space and learns to maximise the reward signal.
+
+    Args:
+        initial_params: Optional starting parameter values (one float per key
+            in ``ALL_PARAM_KEYS``). When supplied, the env's bound window is
+            centred on these values so PPO's exploration is anchored to the
+            user's tuned ``.<GAIT>.ini`` instead of the hard-coded defaults.
 
     Returns:
         Dictionary of the best gait parameters found during training.
@@ -194,6 +204,8 @@ def train_ppo(
         sim_length=sim_length,
         warmup=warmup,
         verbose=verbose,
+        initial_params=initial_params,
+        curriculum_phase=curriculum_phase,
     )
 
     # ── Logger & callback ────────────────────────────────────────────────────
@@ -256,16 +268,51 @@ def train_cma(
     sim_length: float = 5.0,
     warmup: float = 2.0,
     verbose: bool = False,
+    initial_params: dict[str, float] | None = None,
+    cma_state_path: str | None = None,
+    curriculum_phase: int = 3,
 ) -> dict[str, float]:
     """Optimise gait parameters with CMA-ES.
 
     CMA-ES operates in the normalised [-1, 1] action space of the Gymnasium
     environment.  It minimises a cost function, so we negate the reward.
 
+    Args:
+        initial_params: Optional starting parameter values (one float per key
+            in ``ALL_PARAM_KEYS``). When supplied, ``env.get_default_action()``
+            (used as CMA-ES's ``x0``) returns the normalised encoding of these
+            values, so the search begins at the user's tuned ``.<GAIT>.ini``.
+        cma_state_path: Optional path to a pickle file holding prior CMA-ES
+            state ``{"initial_params": dict, "es": CMAEvolutionStrategy,
+            "generations_run": int}``. When the file exists the search
+            resumes from that state (covariance matrix, mean, sigma all
+            preserved); otherwise a fresh strategy is built. The updated
+            state is written back to this same path on successful completion.
+            Bounds are anchored on the *original* ``initial_params`` from the
+            saved state — not the one passed in this call — so the [-1, 1]
+            normalised action space stays consistent across resumes.
+
     Returns:
         Dictionary of the best gait parameters found during optimisation.
     """
     import cma
+
+    # ── Resume-from-checkpoint handling ──────────────────────────────────────
+    # If a prior pickle exists, the bounds anchor (initial_params) is locked
+    # to whatever the *first* run used so the [-1, 1] action space stays
+    # mappable to the same physical parameter window across resumes. The
+    # caller's ``initial_params`` is only used on a fresh run.
+    saved: dict[str, Any] | None = None
+    prior_generations = 0
+    if cma_state_path and os.path.isfile(cma_state_path):
+        with open(cma_state_path, "rb") as fp:
+            saved = pickle.load(fp)
+        prior_generations = int(saved.get("generations_run", 0))
+        seed_params: dict[str, float] | None = saved.get("initial_params")
+        print(f"[CMA-ES] resuming from {cma_state_path} "
+              f"(prior generations: {prior_generations})")
+    else:
+        seed_params = initial_params
 
     # ── Environment ──────────────────────────────────────────────────────────
     env = GaitParamEnv(
@@ -274,27 +321,109 @@ def train_cma(
         sim_length=sim_length,
         warmup=warmup,
         verbose=verbose,
+        initial_params=seed_params,
+        curriculum_phase=curriculum_phase,
     )
 
     # ── Logger ───────────────────────────────────────────────────────────────
     trial_logger = TrialLogger(output_csv)
 
     # ── CMA-ES setup ─────────────────────────────────────────────────────────
-    # Start search at the default parameter set (centre of normalised space)
-    x0 = env.get_default_action().tolist()
-    opts: dict[str, Any] = {"bounds": [-1, 1]}
-    if population_size is not None:
-        opts["popsize"] = population_size
-    # Suppress CMA-ES internal printing unless verbose
-    if not verbose:
-        opts["verbose"] = -9
+    if saved is not None:
+        # Re-use the exact strategy object that was running last time —
+        # preserves mean (best estimate so far), covariance matrix, sigma,
+        # and the internal generation counter.
+        es: cma.CMAEvolutionStrategy = saved["es"]
 
-    es = cma.CMAEvolutionStrategy(x0, sigma0, opts)
+        # Resume-recovery: a previously-saved strategy may already report a
+        # non-empty ``stop()`` (e.g. ``tolfun`` triggered because every
+        # candidate in the last generation hit ``_run_simulation``'s
+        # exception path and returned identical penalty metrics → flat
+        # fitness landscape). Without intervention the main loop's
+        # ``while not es.stop() and …`` would short-circuit and the user's
+        # newly-chosen ``--n-generations`` budget would be ignored, leaving
+        # the pickle permanently bricked.
+        #
+        # Two recovery levels:
+        #   1. Always raise ``maxiter`` to ``prior + n_generations`` and
+        #      relax the tolerance-based criteria so the new budget is
+        #      honoured.
+        #   2. If the previous stop reason is *degenerate* (the strategy
+        #      believes it has converged on a flat fitness surface),
+        #      rebuild a fresh strategy anchored at the learned mean with
+        #      the user-chosen ``sigma0`` — this preserves what was
+        #      learned but escapes the trap.
+        prev_stop = dict(es.stop())
+        if prev_stop:
+            print(f"[CMA-ES] previous state stopped on {prev_stop}; "
+                  f"resetting termination criteria")
+            # Criteria we always relax on resume so the user's budget wins.
+            es.opts.set({
+                "maxiter": prior_generations + n_generations,
+                "tolfun": 0.0,
+                "tolfunhist": 0.0,
+                "tolx": 0.0,
+                "tolstagnation": 10**9,
+                "tolflatfitness": 10**9,
+            })
+            # ``cma.CMAEvolutionStrategy.stop()`` caches triggered conditions
+            # in ``_stopdict``; once a condition fires it stays in the dict
+            # forever, even after the threshold that produced it is relaxed
+            # via ``opts.set``. Clearing the cache (private attribute, so
+            # gated on hasattr for forward-compat with future cma releases)
+            # is the only way to actually unstick the loop.
+            if hasattr(es, "_stopdict"):
+                es._stopdict.clear()
+            degenerate = {
+                "tolfun", "tolfunhist", "tolflatfitness",
+                "noeffectaxis", "noeffectcoord", "tolx",
+            }
+            if degenerate & set(prev_stop.keys()):
+                # Rebuild from the learned mean with fresh sigma0 to escape
+                # the flat-fitness trap. Bounds and verbosity are
+                # re-applied to match the fresh-start branch below.
+                x_resume = np.asarray(es.mean, dtype=float).tolist()
+                opts: dict[str, Any] = {"bounds": [-1, 1]}
+                if population_size is not None:
+                    opts["popsize"] = population_size
+                if not verbose:
+                    opts["verbose"] = -9
+                es = cma.CMAEvolutionStrategy(x_resume, sigma0, opts)
+                print(f"[CMA-ES] rebuilt strategy from learned mean with "
+                      f"sigma0={sigma0} to escape degenerate stop")
+    else:
+        # Fresh start at the seed point in normalised space.
+        x0 = env.get_default_action().tolist()
+        opts: dict[str, Any] = {
+            "bounds": [-1, 1],
+            # Prevent early termination on flat fitness — same criteria
+            # used in the resume-recovery path above.  The user's
+            # ``--n-generations`` budget must always be honoured;
+            # ``tolflatfitness`` / ``tolfun`` would otherwise trigger
+            # after a single generation if every candidate hits the
+            # penalty cliff (identical reward → flat fitness landscape).
+            "tolfun": 0,
+            "tolfunhist": 0,
+            "tolx": 0,
+            "tolflatfitness": 10**9,
+            "tolstagnation": 10**9,
+        }
+        if population_size is not None:
+            opts["popsize"] = population_size
+        # Suppress CMA-ES internal printing unless verbose
+        if not verbose:
+            opts["verbose"] = -9
+
+        es = cma.CMAEvolutionStrategy(x0, sigma0, opts)
 
     # ── Tracking ─────────────────────────────────────────────────────────────
     best_reward: float = -np.inf
     best_metrics: dict[str, float] = {}
-    best_params: dict[str, float] = {}
+    # Pre-seed best_params with the initial guess so a run that finds no
+    # improvement (e.g. CMA-ES already converged on resume) still returns a
+    # usable parameter dict instead of an empty one. The first improving
+    # candidate inside ``evaluate`` overwrites this.
+    best_params: dict[str, float] = dict(seed_params) if seed_params else {}
     trial_count: int = 0
     feasible_count: int = 0
 
@@ -347,6 +476,36 @@ def train_cma(
             )
 
     trial_logger.close()
+
+    # ── Persist CMA-ES state for resume on the next click ────────────────────
+    # The strategy object carries the full search state — mean, covariance
+    # matrix, step size, internal counter — so the next invocation that
+    # passes the same ``cma_state_path`` continues evolving instead of
+    # restarting cold from x0.
+    #
+    # IMPORTANT: only overwrite the on-disk pickle if at least one
+    # generation actually ran this call. A 0-iteration run (e.g. the
+    # caller asked for ``--n-generations 0`` or the loop short-circuited
+    # before the resume-recovery logic was added) must never replace a
+    # healthy checkpoint with one whose strategy has already terminated —
+    # that is the bug that originally bricked users' AMBLE checkpoint.
+    if cma_state_path and generation > 0:
+        os.makedirs(os.path.dirname(cma_state_path) or ".", exist_ok=True)
+        new_total = prior_generations + generation
+        with open(cma_state_path, "wb") as fp:
+            pickle.dump(
+                {
+                    "initial_params": seed_params,
+                    "es": es,
+                    "generations_run": new_total,
+                },
+                fp,
+            )
+        print(f"[CMA-ES] saved state to {cma_state_path} "
+              f"(total generations: {new_total})")
+    elif cma_state_path:
+        print(f"[CMA-ES] no generations ran this call; "
+              f"leaving {cma_state_path} untouched")
 
     # ── Report ───────────────────────────────────────────────────────────────
     print_results(best_params, best_reward, best_metrics,
@@ -450,14 +609,31 @@ def parse_args() -> argparse.Namespace:
                    help="Warmup time before metrics collection (seconds).")
 
     # ── Reward weights ───────────────────────────────────────────────────────
-    p.add_argument("--w-cot", type=float, default=1.0,
-                   help="Reward weight for cost of transport.")
-    p.add_argument("--w-vel", type=float, default=0.5,
+    # Defaults mirror ``RewardWeights`` in gait_env.py and encode the
+    # priority order gait >> velocity > CoT > stability requested by the
+    # user. Override per run from the CLI when retuning.
+    p.add_argument("--w-gait", type=float, default=3.0,
+                   help="Reward weight for footfall-pattern matching (PRIMARY).")
+    p.add_argument("--w-vel", type=float, default=1.0,
                    help="Reward weight for forward velocity.")
-    p.add_argument("--w-tilt", type=float, default=2.0,
-                   help="Reward weight for body tilt penalty.")
+    p.add_argument("--w-cot", type=float, default=0.2,
+                   help="Reward weight for cost of transport.")
+    p.add_argument("--w-tilt", type=float, default=0.1,
+                   help="Reward weight for body tilt (|roll| + |pitch|).")
+    p.add_argument("--w-ang-vel", type=float, default=0.05,
+                   help="Reward weight for base angular-velocity penalty.")
+    p.add_argument("--w-slip", type=float, default=0.1,
+                   help="Reward weight for stance-phase foot-slip penalty (Phase 3 only).")
+    p.add_argument("--w-clearance", type=float, default=0.5,
+                   help="Reward weight for swing-phase ground-clearance penalty (Phase 3 only).")
     p.add_argument("--w-fall", type=float, default=10.0,
-                   help="Reward weight for fall penalty.")
+                   help="Reward weight for the hard fall / backward-motion / invalid-CoT cliff.")
+
+    # ── Curriculum ──────────────────────────────────────────────────────────
+    # Gates which reward terms are summed. Phase 1 trains footfall pattern
+    # only, Phase 2 adds forward velocity, Phase 3 enables the full reward.
+    p.add_argument("--curriculum-phase", type=int, default=3, choices=[1, 2, 3],
+                   help="1=gait only, 2=gait+velocity, 3=full reward (default).")
 
     # ── Output ───────────────────────────────────────────────────────────────
     p.add_argument("--output", type=str, default=None,
@@ -466,6 +642,23 @@ def parse_args() -> argparse.Namespace:
                    help="Directory for PPO model checkpoints.")
     p.add_argument("--verbose", action="store_true",
                    help="Enable verbose simulation output.")
+
+    # ── Initial-guess / structured I/O (used by the GUI subprocess flow) ─────
+    p.add_argument("--initial-params-json", type=str, default=None,
+                   help="Path to a JSON file containing a {key: float} dict "
+                        "of starting parameter values (keys = ALL_PARAM_KEYS, "
+                        "i.e. 'freq', 'duty_factor', and the 12 ellipsoid "
+                        "fields). Search bounds are centred on these values.")
+    p.add_argument("--output-json", type=str, default=None,
+                   help="Path to write the best-params dict to as JSON on "
+                        "successful completion. Used by the GUI to read back "
+                        "the optimisation result.")
+    p.add_argument("--cma-state-path", type=str, default=None,
+                   help="Path to the pickled CMA-ES checkpoint. If the file "
+                        "exists at start, the strategy resumes from it; "
+                        "otherwise a fresh strategy is built. The updated "
+                        "state is written back here on successful "
+                        "completion. CMA-ES only.")
 
     return p.parse_args()
 
@@ -487,24 +680,61 @@ def main() -> None:
 
     # ── Build reward weights from CLI args ───────────────────────────────────
     reward_weights = RewardWeights(
-        w_cot=args.w_cot,
+        w_gait=args.w_gait,
         w_vel=args.w_vel,
+        w_cot=args.w_cot,
         w_tilt=args.w_tilt,
+        w_ang_vel=args.w_ang_vel,
+        w_slip=args.w_slip,
+        w_clearance=args.w_clearance,
         w_fall=args.w_fall,
     )
 
     # ── Auto-generate output CSV path if not provided ────────────────────────
+    # Default destination is ``<repo>/bio_inspired_muscle/data/`` — a
+    # dedicated folder one level above the python package, sibling of
+    # ``python/``. Keeps the python source tree clean and groups every
+    # run's CSV in one predictable place. Bare-filename ``--output``
+    # values (no directory separator) get the same treatment so the
+    # GUI flow lands here too; absolute or explicitly-relative paths
+    # are passed through untouched.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # ``__file__`` -> .../bio_inspired_muscle/python/sim/reinforcement_learning.py
+    # parents[2]  -> .../bio_inspired_muscle
+    data_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data",
+    )
     if args.output is None:
-        output_csv = f"rl_results_{args.algo}_{args.gait.upper()}_{timestamp}.csv"
+        os.makedirs(data_dir, exist_ok=True)
+        output_csv = os.path.join(
+            data_dir,
+            f"rl_results_{args.algo}_{args.gait.upper()}_{timestamp}.csv",
+        )
+    elif os.path.dirname(args.output) == "":
+        os.makedirs(data_dir, exist_ok=True)
+        output_csv = os.path.join(data_dir, args.output)
     else:
         output_csv = args.output
+
+    # ── Optional initial-guess JSON (used by the GUI subprocess flow) ────────
+    # We don't validate the keys here; ``GaitParamEnv`` raises a clear KeyError
+    # if a required ALL_PARAM_KEYS entry is missing when bounds are computed.
+    initial_params: dict[str, float] | None = None
+    if args.initial_params_json:
+        with open(args.initial_params_json, "r") as fp:
+            raw = json.load(fp)
+        initial_params = {str(k): float(v) for k, v in raw.items()}
+        print(f"  Seed    : {args.initial_params_json} (initial guess)")
 
     print(f"{'─' * 72}")
     print(f"  Gait Parameter Optimizer — {args.algo.upper()}")
     print(f"  Gait    : {gait.name}")
-    print(f"  Weights : COT={args.w_cot}, vel={args.w_vel}, "
-          f"tilt={args.w_tilt}, fall={args.w_fall}")
+    print(f"  Phase   : {args.curriculum_phase}  "
+          f"(1=gait only, 2=gait+vel, 3=full)")
+    print(f"  Weights : gait={args.w_gait}, vel={args.w_vel}, "
+          f"cot={args.w_cot}, tilt={args.w_tilt}, ang_vel={args.w_ang_vel}, "
+          f"slip={args.w_slip}, clearance={args.w_clearance}, fall={args.w_fall}")
     print(f"  Output  : {output_csv}")
     print(f"{'─' * 72}\n")
 
@@ -520,6 +750,8 @@ def main() -> None:
             sim_length=args.sim_length,
             warmup=args.warmup,
             verbose=args.verbose,
+            initial_params=initial_params,
+            curriculum_phase=args.curriculum_phase,
         )
     elif args.algo == "cma":
         best_params = train_cma(
@@ -532,6 +764,9 @@ def main() -> None:
             sim_length=args.sim_length,
             warmup=args.warmup,
             verbose=args.verbose,
+            initial_params=initial_params,
+            cma_state_path=args.cma_state_path,
+            curriculum_phase=args.curriculum_phase,
         )
     else:
         # Should not reach here due to argparse choices, but just in case
@@ -540,6 +775,14 @@ def main() -> None:
 
     # Store gait name for any future post-processing
     best_params["_gait"] = gait.name
+
+    # ── Structured result for the GUI subprocess flow ────────────────────────
+    # Dump the best-params dict as JSON so the parent process (the Qt
+    # ReinforcementWorker) can read it without having to parse stdout.
+    if args.output_json:
+        with open(args.output_json, "w") as fp:
+            json.dump(best_params, fp, indent=2)
+        print(f"[RL] Wrote best-params JSON to {args.output_json}")
 
 
 if __name__ == "__main__":

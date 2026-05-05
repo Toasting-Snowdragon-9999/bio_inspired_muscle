@@ -264,7 +264,7 @@ class FuzzyController:
         self.fuzzy_gait_switch = FuzzyGaitSwitch(robot_interface)
 
     def update(self, dt: float) -> None:
-
+        return 
         vel_cmd = VelCmd(self.robot_interface.target_speed)
         current_state = self.robot_interface.robot_state
         transition_gait = self.gait_picker.pick_gait(vel_cmd, self.robot_interface.current_gait)

@@ -5,7 +5,7 @@ from kuramoto_cpg import KuramotoCpg
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
-from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, EllipsoidConfig
+from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, EllipsoidConfig, GaitScheduler
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
@@ -361,8 +361,6 @@ def test_foot_positions():
     foot_target = builder.transform_to_hip_coordinates(foot_targets)
     print(foot_target)
 
-
-
 def test_bezier_trajectory():
     """Visualise the bio-realistic Bézier foot trajectory.
     
@@ -590,7 +588,7 @@ def test_ellipsoid_traj():
         )
     # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
     builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.6)
-
+    planner = GaitScheduler(robot_interface)
     # Simulate 5 s, collect trajectories
     seconds = 5.0
     steps   = int(seconds / robot_interface.dt)
@@ -603,7 +601,9 @@ def test_ellipsoid_traj():
         phase = cpg.get_phase_outputs()
         
         vel   = cpg.get_phase_velocities()
-        traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
+        phase_norm, contact = planner.compute(phase)
+        traj, _ = builder.new_build_ellipsoid_trajectory(phase_norm, contact, vel)
+        # traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
         foot_trajectories.append(traj)
         for i, foot in enumerate([Foot.FL, Foot.FR, Foot.RL, Foot.RR]):
             if -threshold < phase[i] < threshold:
@@ -654,10 +654,77 @@ def test_ellipsoid_traj():
     plt.tight_layout()
     plt.show()
 
+def plot_single_gait_footfall():
+    gait = Gait.WALK
+    feet_order = [Foot.FL, Foot.FR, Foot.RR, Foot.RL]
+    duty_factor = 0.240
+    frequency = 1.500000
+    dt = 0.002
+    duty = duty_factor
+    n_cycles = 4
+
+    robot_interface = RobotInterface(
+        starting_state=State(gait=gait, mode=Mode.MOVING, frequency=frequency)
+    )
+    robot_interface.dt = dt
+    robot_interface.duty_factor = duty
+
+    cpg = KuramotoCpg(robot_interface)
+    scheduler = GaitScheduler(robot_interface)
+
+    # Warmup
+    warmup_steps = int(2.0 / (frequency * dt))
+    for _ in range(warmup_steps):
+        cpg.run()
+
+    # Record
+    record_steps = int(n_cycles / (frequency * dt))
+    contact_log = {f: [] for f in feet_order}
+
+    for _ in range(record_steps):
+        cpg.run()
+        phases = cpg.get_phase_outputs()
+        _, contact = scheduler.compute(phases)
+
+        for foot in feet_order:
+            contact_log[foot].append(contact[foot])
+
+    # Convert to matrix (rows = feet, cols = time)
+    data = np.array([contact_log[f] for f in feet_order])
+
+    # Flip so FL is top
+    data = data[::-1]
+
+    # Plot as image
+    plt.figure(figsize=(10, 3))
+    plt.imshow(data, aspect='auto', cmap='gray_r', interpolation='nearest')
+
+    plt.yticks(
+        range(len(feet_order)),
+        [f.name for f in feet_order[::-1]]
+    )
+
+    plt.xlabel("Time (samples)")
+    plt.title(f"Footfall Pattern — {gait.name}")
+
+    # Optional: vertical lines for cycles
+    samples_per_cycle = int(1 / (frequency * dt))
+    for c in range(1, n_cycles):
+        plt.axvline(c * samples_per_cycle, color='red', linestyle='--', alpha=0.3)
+
+    plt.colorbar(label="Contact (1=stance, 0=swing)")
+    plt.tight_layout()
+    plt.show()
+
+
 def test_main():
     print("==================================================")
+    print("Testing footfall pattern")
+    plot_single_gait_footfall()
+
+    print("==================================================")
     print("Testing ellipsoid trajectory")
-    test_cpg_output()
+    # test_cpg_output()
     test_ellipsoid_traj()
 
     print("==================================================")

@@ -38,6 +38,14 @@ Gait.AMBLE  = Gait("AMBLE",  (np.pi/2, 3*np.pi/2, 0.0, np.pi))
 Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0, 0.6*np.pi))
 Gait.GALLOP = Gait("GALLOP", (0.0, 0.2*np.pi, 0.8*np.pi, np.pi))
 
+# GAIT_NOMINAL_FREQUENCY = {
+#     Gait.WALK: 1.4,
+#     Gait.TROT: 1.95,
+#     Gait.AMBLE: 1.7,
+#     Gait.CANTER: 2.4,
+#     Gait.GALLOP: 3.0,
+# }
+
 class Mode(Enum):
     MOVING = 1
     TRANSITION = 2
@@ -148,6 +156,12 @@ class RobotInterface:
         self._cpg_transition_speed = 0.5
         self._body_velocity = 0.0
         self._target_speed = 0.5
+        self._expected_footfall: dict[Foot, int] = {}  # Updated by CPG output for use in PD control and logging
+        # Actual per-foot ground contact (1 = stance, 0 = swing). Synced every
+        # mj_step from MuJoCo contact pairs in MujocoSim._sync_robot_interface.
+        # Mirror partner of `_expected_footfall`: comparing the two yields the
+        # gait_error term used by the RL reward (see sim/gait_env.py).
+        self._contact: dict[Foot, int] = {}
         # Neutral default so the fuzzy controller has a sane input until a real
         # stability estimator is wired up. 0.75 falls in the 'stable' band.
         self._stability_metric = 0.75
@@ -189,6 +203,24 @@ class RobotInterface:
     @duty_factor.setter
     def duty_factor(self, value: float):
         self._duty_factor = float(value)
+
+    @property
+    def expected_footfall(self):
+        return self._expected_footfall
+
+    @expected_footfall.setter
+    def expected_footfall(self, value: dict[Foot, int]):
+        self._expected_footfall = value
+
+    @property
+    def contact(self) -> dict[Foot, int]:
+        """Actual per-foot ground contact (1 = stance, 0 = swing). Populated
+        every mj_step by the simulator from MuJoCo contact pairs."""
+        return self._contact
+
+    @contact.setter
+    def contact(self, value: dict[Foot, int]):
+        self._contact = value
 
     @property
     def dt(self):
