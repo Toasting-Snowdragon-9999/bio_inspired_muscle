@@ -7,8 +7,9 @@ from skfuzzy import control as ctrl
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from shared_module.robot_state import Gait, Mode, RobotInterface, State
+from shared_module.robot_state import Gait, Mode, RobotInterface, State, GaitFreq, ALL_GAITS
 from logger.logger_config import logger
+from cpg.trajectory_builder import EllipsoidConfig
 
 MAX_VELOCITY = 1.0
 MIN_VELOCITY = 0.0
@@ -79,33 +80,39 @@ class VelCmd:
 
 
 class GaitPicker:
-
-    def pick_trajectory(self, current_gait: Gait):
-        # Placeholder for trajectory picking logic based on velocity and current gait
-        # This can be expanded with more complex logic or fuzzy rules as needed
-        return None
-
-    def pick_frequency(self, current_gait: Gait):
-        # Placeholder for frequency picking logic based on velocity and current gait
-        # This can be expanded with more complex logic or fuzzy rules as needed
-        return None
-
-    def pick_gait(self, vel: VelCmd, current_gait: Gait) -> Gait:
+    
+    @staticmethod
+    def pick_freq(current_gait: Gait):
+        if current_gait == Gait.WALK:
+            return GaitFreq.WALK.value
+        elif current_gait == Gait.AMBLE:
+            return GaitFreq.AMBLE.value
+        elif current_gait == Gait.TROT:
+            return GaitFreq.TROT.value
+        elif current_gait == Gait.CANTER:
+            return GaitFreq.CANTER.value
+        elif current_gait == Gait.GALLOP:
+            return GaitFreq.GALLOP.value
+        else:
+            return None
+        
+    @staticmethod
+    def pick_gait(vel: VelCmd, current_gait: Gait) -> Gait:
         v = vel.v
 
         picked = current_gait
         if current_gait == Gait.WALK:
-            if v > 0.35:
+            if v > 0.25:
                 picked = Gait.AMBLE
 
         elif current_gait == Gait.AMBLE:
-            if v < 0.25:
+            if v < 0.20:
                 picked = Gait.WALK
-            elif v > 0.55:
+            elif v > 0.30:
                 picked = Gait.TROT
 
         elif current_gait == Gait.TROT:
-            if v < 0.45:
+            if v < 0.25:
                 picked = Gait.AMBLE
             elif v > 0.75:
                 picked = Gait.CANTER
@@ -125,12 +132,13 @@ class GaitPicker:
     def pick_new_state(self, vel: VelCmd, current_state: State) -> State:
         new_gait = self.pick_gait(vel, current_state.gait)
         new_traj_params = self.pick_trajectory(current_state.gait)
-        new_frequency = self.pick_frequency(current_state.gait)
+        new_frequency = self.pick_freq(current_state.gait)
         return State(mode=current_state.mode, gait=new_gait, traj_params=new_traj_params, frequency=new_frequency)
 
 class FuzzyGaitSwitch:
     def __init__(self, robot_interface: RobotInterface):
         self.robot_interface = robot_interface
+        self.a = None
         # Define fuzzy variables
         # self.vel_cmd = ctrl.Antecedent(np.arange(0, 1.1, 0.01), 'velocity')
         self.stability = ctrl.Antecedent(np.arange(0, 1.01, 0.01), 'stability')
@@ -215,16 +223,35 @@ class FuzzyGaitSwitch:
         for a, b in zip(old_gait.value, new_gait.value):
             trans_gait_values.append(self.interpolate(a, b, blending_factor))
         blended = Gait("BLENDED_GAIT", tuple(trans_gait_values))
+        
         return blended
+    
+    def interp_angle(self, a: float, b: float, s: float) -> float:
 
-    def blend_trajectories(self, old_traj_params, new_traj_params, blending_factor) -> Any:
-        new_traj_params = {}
+        delta = (b - a + np.pi) % (2*np.pi) - np.pi
+
+        return a + s * delta
+
+    def blend_trajectories(
+        self,
+        old_traj_params: EllipsoidConfig,
+        new_traj_params: EllipsoidConfig,
+        blending_factor: float
+    ) -> EllipsoidConfig:
+
+        blended_values = {}
+
         for key in old_traj_params.keys():
             old_val = old_traj_params[key]
             new_val = new_traj_params[key]
-            blended_val = self.interpolate(old_val, new_val, blending_factor)
-            new_traj_params[key] = blended_val
-        return new_traj_params
+
+            blended_values[key] = self.interp_angle(
+                old_val,
+                new_val,
+                blending_factor
+            )
+
+        return EllipsoidConfig(**blended_values)
 
     def update(self, dt: float) -> Gait:
         # `dt` is the elapsed time since the last call — when driven from a
@@ -233,17 +260,21 @@ class FuzzyGaitSwitch:
         current_gait = self.robot_interface.current_gait
         # `next_gait` accessor crashes when next_state is None (it does
         # `next_state.gait` unconditionally), so guard at the source instead.
-        next_state = self.robot_interface.robot_state.next_state if self.robot_interface.robot_state else None
-
-        target_gait = next_state.gait if next_state is not None else None
+        target_gait = self.robot_interface.next_gait
 
         if target_gait is None or current_gait == target_gait:
+            self.a = None
             if self.robot_interface.current_mode == Mode.TRANSITION:
                 self.robot_interface.update_mode(Mode.MOVING)
-            return current_gait
-
+            return (
+                current_gait,
+                self.robot_interface.frequency,
+                None
+            )
+        if self.a is None:
+            self.a = self.robot_interface.frequency # capture the frequency at the start of the transition for blending
+            self.blending_factor = 0.0 # reset blending factor at the start of a new transition
         self.robot_interface.update_mode(Mode.TRANSITION)
-        robot_vel = self.robot_interface.body_velocity
         speed_error_in = self.robot_interface.target_speed - self.robot_interface.body_velocity
         stability_in = self.robot_interface.stability_metric
         self.fuzzy_sim.input['speed_error'] = speed_error_in
@@ -253,26 +284,53 @@ class FuzzyGaitSwitch:
         blend_rate_output = self.fuzzy_sim.output['blend_rate']
         blending_factor = self.update_blending_factor(blend_rate_output, dt)
         gait_params = self.blend_gaits(self.robot_interface.current_gait, target_gait, blending_factor)
-        traj_params = self.blend_trajectories(self.robot_interface.current_traj_params, self.robot_interface.next_traj_params, blending_factor)
-        frequency = self.interpolate(self.robot_interface.frequency, self.robot_interface.next_frequency, blending_factor)
-        return gait_params, traj_params, frequency
+        next_freq = GaitPicker.pick_freq(target_gait)
+        frequency = self.interpolate(self.a, next_freq, blending_factor)
+        return gait_params, frequency, blending_factor
 
 class FuzzyController:
     def __init__(self, robot_interface: RobotInterface):
         self.robot_interface = robot_interface
-        self.gait_picker = GaitPicker()
         self.fuzzy_gait_switch = FuzzyGaitSwitch(robot_interface)
 
-    def update(self, dt: float) -> None:
-        return 
+    def update(self, dt: float) -> float:
+        
         vel_cmd = VelCmd(self.robot_interface.target_speed)
-        current_state = self.robot_interface.robot_state
-        transition_gait = self.gait_picker.pick_gait(vel_cmd, self.robot_interface.current_gait)
+        if vel_cmd.v < 0.05:
+            self.robot_interface.enable_cpg(False)
+            self.robot_interface.next_gait = Gait.WALK
+            return 0.0
+        transition_gait = GaitPicker.pick_gait(vel_cmd, self.robot_interface.current_gait)
         self.robot_interface.next_gait = transition_gait
-        new_gait, new_traj, new_freq = self.fuzzy_gait_switch.update(dt)
-        self.robot_interface.current_gait = new_gait
-        self.robot_interface.current_traj_params = new_traj
+        new_gait, new_freq, blending_factor = self.fuzzy_gait_switch.update(dt)
+        new_gait = self.check_gait(new_gait)
+
+        if blending_factor is not None and blending_factor >= 0.999:
+            logger.debug(
+                f"Transition complete: "
+                f"{self.robot_interface.current_gait} "
+                f"-> {self.robot_interface.next_gait}"
+            )
+            self.robot_interface.current_gait = self.robot_interface.next_gait
+            self.robot_interface.active_gait = self.robot_interface.next_gait
+            self.current_traj_params = self.robot_interface.next_traj_params
+            self.robot_interface.active_traj_params = self.robot_interface.next_traj_params
+            self.robot_interface.next_gait = None
+            self.robot_interface.update_mode(Mode.MOVING)
+            return 1.0
+
+        self.robot_interface.active_gait = new_gait
         self.robot_interface.frequency = new_freq
+        return blending_factor
+    
+    def update_trajectory(self, dt: float, blending_factor: float) -> None:
+        self.robot_interface.active_traj_params =  self.fuzzy_gait_switch.blend_trajectories(self.robot_interface.current_traj_params, self.robot_interface.next_traj_params, blending_factor)
+
+    def check_gait(self, gait: Gait) -> Gait:
+        for known_gait in ALL_GAITS:
+            if np.allclose(gait.value, known_gait.value, atol=0.01):
+                return known_gait
+        return gait
 
 def test_fuzzy_gait_switch():
     """Observe the WALK -> AMBLE fuzzy gait transition over 1 second.
@@ -295,7 +353,7 @@ def test_fuzzy_gait_switch():
 
     starting_state = State(mode=Mode.MOVING, gait=Gait.WALK, frequency=1.0)
     robot_interface = RobotInterface(starting_state)
-    robot_interface.target_speed = 0.5        # > 0.35 -> GaitPicker routes WALK -> AMBLE
+    robot_interface.target_speed = 0.26        # > 0.35 -> GaitPicker routes WALK -> AMBLE
     robot_interface.body_velocity = 0.0       # max speed_error -> larger fuzzy blend_rate
     robot_interface.stability_metric = 0.85   # 'very_stable' band -> forward blend
 
@@ -328,7 +386,7 @@ def test_fuzzy_gait_switch():
         t = (i + 1) * dt
         logger.debug("-" * 80)
         logger.debug(f"[step {i+1:02d}/{n_steps}] t={t:.3f}s")
-        blended_gait = fuzzy.update(dt)
+        blended_gait, frequency, blending_factor = fuzzy.update(dt)
         logger.debug(
             f"[step {i+1:02d}] post-update: blending_factor={fuzzy.blending_factor:.4f}, "
             f"blended_phases={tuple(round(x, 4) for x in blended_gait.value)}, "
@@ -344,5 +402,88 @@ def test_fuzzy_gait_switch():
     )
     logger.debug("=" * 80)
 
+def test_fuzzy_controller_transition():
+    """
+    Full-system test using FuzzyController.
+
+    This test intentionally exercises the REAL controller path:
+        FuzzyController
+            -> GaitPicker
+            -> FuzzyGaitSwitch
+            -> check_gait()
+            -> current_gait update
+
+    so we can observe whether:
+        WALK -> BLENDED_GAIT -> AMBLE
+
+    properly completes.
+    """
+
+    logger.debug("=" * 80)
+    logger.debug("test_fuzzy_controller_transition")
+    logger.debug("Simulate WALK -> AMBLE transition driven by FuzzyController.update()")
+    logger.debug(f"Walk gait params: {Gait.WALK.value}")
+    logger.debug(f"Amble gait params: {Gait.AMBLE.value}")
+    logger.debug("=" * 80)
+
+    starting_state = State(
+        mode=Mode.MOVING,
+        gait=Gait.WALK,
+        frequency=GaitFreq.WALK.value
+    )
+
+    robot_interface = RobotInterface(starting_state)
+
+    # Force WALK -> AMBLE transition
+    robot_interface.target_speed = 0.26
+    robot_interface.body_velocity = 0.0
+    robot_interface.stability_metric = 0.85
+
+    controller = FuzzyController(robot_interface)
+
+    logger.debug(
+        f"[setup] initial gait={robot_interface.current_gait}, "
+        f"target_speed={robot_interface.target_speed}, "
+        f"stability={robot_interface.stability_metric}"
+    )
+
+    dt = 0.05
+    max_steps = 100
+
+    for i in range(max_steps):
+
+        t = (i + 1) * dt
+
+        blending_factor = controller.update(dt)
+
+        gait = robot_interface.active_gait
+
+        logger.debug("-" * 80)
+        logger.debug(
+            f"[step {i+1:03d}] "
+            f"t={t:.2f}s | "
+            f"gait={gait.name} | "
+            f"blending_factor={blending_factor:.4f} | "
+            f"phases={tuple(round(x, 4) for x in gait.value)}"
+        )
+
+        # Detect successful snap to AMBLE
+        if gait == Gait.AMBLE:
+            logger.debug("")
+            logger.debug("TRANSITION COMPLETE -> AMBLE")
+            logger.debug(f"completed in {t:.2f} seconds")
+            break
+
+    else:
+        logger.error("")
+        logger.error("Transition never completed!")
+        logger.error(
+            f"final gait={robot_interface.current_gait.name}"
+        )
+
+    logger.debug("=" * 80)
+    logger.debug("test_fuzzy_controller_transition DONE")
+    logger.debug("=" * 80)
+
 if __name__ == "__main__":
-    test_fuzzy_gait_switch()
+    test_fuzzy_controller_transition()

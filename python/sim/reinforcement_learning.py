@@ -25,6 +25,7 @@ import csv
 import json
 import pickle
 import argparse
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -431,9 +432,19 @@ def train_cma(
     def evaluate(action: np.ndarray) -> float:
         """Run one simulation and return negative reward (for minimisation)."""
         nonlocal trial_count, best_reward, best_metrics, best_params, feasible_count
-        obs, reward, terminated, truncated, info = env.step(action)
-        # Reset the env for the next evaluation
-        env.reset()
+        # Diagnostic wrapper: surfaces any exception that escapes
+        # ``_run_simulation``'s own try/except (e.g. raised inside
+        # ``env.reset()`` or in observation/reward post-processing).
+        # Without this, MuJoCo's C-side callback wrapper prints
+        # "ERROR: Python exception raised" but the actual Python traceback
+        # is lost, making the search appear to die silently.
+        try:
+            obs, reward, terminated, truncated, info = env.step(action)
+            # Reset the env for the next evaluation
+            env.reset()
+        except Exception:
+            traceback.print_exc()
+            raise
 
         metrics = info.get("metrics", {})
         params = info.get("params", {})

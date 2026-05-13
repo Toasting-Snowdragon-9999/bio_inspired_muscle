@@ -117,7 +117,7 @@ class IKController:
 
         # ===== CPG & trajectory =====
         self.cpg.set_frequency(self.robot_interface.frequency)  # Update CPG frequency from robot_interface (settable via property)
-        self.cpg.set_gait(self.robot_interface.current_gait)  # Update CPG gait from robot_interface (settable via property)
+        self.cpg.set_gait(self.robot_interface.active_gait)  # Update CPG gait from robot_interface (settable via property)
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()

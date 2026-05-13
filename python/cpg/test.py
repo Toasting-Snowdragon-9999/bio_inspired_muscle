@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
 
 def test_cpg_output():
-    robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5))
+    robot_interface = RobotInterface(starting_state=State(gait=Gait.WALK, mode=Mode.MOVING, frequency=0.5))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
     traj = TrajectoryBuilder(robot_interface)
@@ -20,11 +20,6 @@ def test_cpg_output():
     steps = int((second) / robot_interface.dt)
     output = {}
     for step in range(steps):
-        if step == steps // 4:
-            robot_interface.enable_cpg = False
-        if step == 2 * steps // 4:
-            robot_interface.enable_cpg = True
-            cpg.reset()  # Reset phases to zero to test that they resume correctly when re-enabled
         cpg.run()
         output[step] = cpg.get_oscillator_outputs()
     time = np.arange(steps) * robot_interface.dt
@@ -40,6 +35,96 @@ def test_cpg_output():
     plt.legend()
     plt.grid()
     plt.show()
+
+def test_gait_transtion():
+    """Visualise CPG outputs while the gait blends from WALK to AMBLE.
+
+    Mirrors :func:`test_cpg_output` (CPG output traces vs time) but, after a
+    short warmup, advances a ``blending_factor`` by ``blend_rate * dt`` and
+    rebuilds the CPG's pairwise phase-offset matrix every step from a
+    linearly interpolated ``WALK -> AMBLE`` phase tuple. The Kuramoto
+    coupling then smoothly steers the oscillators toward the new
+    relative-phase pattern.
+
+    Why we update the offset matrix directly instead of calling
+    :meth:`KuramotoCpg.set_gait`: ``set_gait`` snaps each neuron's phase to
+    ``gait.value[i]`` on every call, which would teleport oscillators on
+    every blend step and erase the very transition we're trying to plot.
+    """
+    robot_interface = RobotInterface(
+        starting_state=State(gait=Gait.WALK, mode=Mode.MOVING, frequency=0.5)
+    )
+    robot_interface.dt = 0.001
+    cpg = KuramotoCpg(robot_interface)
+
+    # Timeline: warmup at WALK, then ramp blend toward AMBLE until it saturates.
+    seconds = 6.0
+    warmup_seconds = 1.0
+    blend_rate = 0.4   # per second; saturates blending_factor at 1.0 in 2.5 s
+    steps = int(seconds / robot_interface.dt)
+    warmup_steps = int(warmup_seconds / robot_interface.dt)
+
+    walk_phases = np.array(Gait.WALK.value, dtype=float)
+    amble_phases = np.array(Gait.AMBLE.value, dtype=float)
+
+    output = {}
+    blend_log = np.zeros(steps)
+    blending_factor = 0.0
+
+    def interp_angle(a, b, s):
+
+        delta = (b - a + np.pi) % (2*np.pi) - np.pi
+
+        return a + s * delta
+    
+    for step in range(steps):
+        # Advance the blend after warmup. Clamp at 1.0 so we settle at AMBLE
+        # for the tail of the recording instead of overshooting.
+        if step >= warmup_steps and blending_factor < 1.0:
+            blending_factor = min(1.0, blending_factor + blend_rate * robot_interface.dt)
+            blend_phases = np.array([
+                interp_angle(a, b, blending_factor)
+                for a, b in zip(walk_phases, amble_phases)
+            ])
+            cpg._build_phase_offset_matrix(blend_phases)
+        blend_log[step] = blending_factor
+        cpg.run()
+        output[step] = cpg.get_oscillator_outputs()
+
+    time = np.arange(steps) * robot_interface.dt
+
+    fig, (ax_out, ax_blend) = plt.subplots(
+        2, 1, figsize=(10, 7), sharex=True,
+        gridspec_kw={'height_ratios': [3, 1]},
+    )
+    for i in range(cpg.neurons_cnt):
+        foot = NEURON_TO_FOOT_DICT[i]
+        # Match test_cpg_output's convention: dash neurons 3/4 so they stay
+        # legible when overlapping 1/2 mid-blend.
+        linestyle = '--' if i >= 2 else '-'
+        ax_out.plot(
+            time,
+            [output[step][i] for step in range(steps)],
+            label=f'{foot.name}',
+            linestyle=linestyle,
+        )
+    ax_out.axvline(warmup_seconds, color='gray', linestyle=':', alpha=0.7,
+                   label='blend start')
+    ax_out.set_title('Kuramoto CPG Outputs — WALK to AMBLE blend')
+    ax_out.set_ylabel('Neuron output')
+    ax_out.legend(loc='upper right')
+    ax_out.grid()
+
+    ax_blend.plot(time, blend_log, color='tab:purple', linewidth=1.5)
+    ax_blend.axvline(warmup_seconds, color='gray', linestyle=':', alpha=0.7)
+    ax_blend.set_xlabel('Time (seconds)')
+    ax_blend.set_ylabel('blend (WALK→AMBLE)')
+    ax_blend.set_ylim(-0.05, 1.05)
+    ax_blend.grid()
+
+    plt.tight_layout()
+    plt.show()
+
 
 def test_duty_factor():
     robot_interface = RobotInterface(
@@ -562,7 +647,7 @@ def test_ellipsoid_traj():
     and duty factor just like the oval trajectory."""
 
     robot_interface = RobotInterface(
-        starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5),
+        starting_state=State(gait=Gait.AMBLE, mode=Mode.MOVING, frequency=1.75),
         trajectory_method=TrajectoryMethod.ELLIPSOID
     )
     robot_interface.dt = 0.001
@@ -572,22 +657,22 @@ def test_ellipsoid_traj():
     # EllipsoidConfig now has independent front_* / rear_* parameters.
     # Front legs (FL, FR) and rear legs (RL, RR) can have different shapes.
     cfg = EllipsoidConfig(
-            front_x_fore   = 0.14,  
-            front_x_hind   = 0.08,
-            front_z_top    = 0.10,
-            front_z_bottom = 0.02,
-            front_rotation = 0.05,
-            front_skew     = 0.05,
+            front_x_fore   = 0.168100,  
+            front_x_hind   = 0.119400,
+            front_z_top    = 0.118300,
+            front_z_bottom = -0.027500,
+            front_rotation = 0.082300,
+            front_skew     = -0.022200,
 
-            rear_x_fore    = 0.06,
-            rear_x_hind    = 0.14,
-            rear_z_top     = 0.08,
-            rear_z_bottom  = 0.02,
-            rear_rotation  = -0.05,
-            rear_skew      = -0.00,
+            rear_x_fore    = 0.020700,
+            rear_x_hind    = 0.105600,
+            rear_z_top     = 0.089000,
+            rear_z_bottom  = 0.054400,
+            rear_rotation  = -0.065400,
+            rear_skew      = -0.035000,
         )
     # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
-    builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.6)
+    builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.4)
     planner = GaitScheduler(robot_interface)
     # Simulate 5 s, collect trajectories
     seconds = 5.0
@@ -601,9 +686,9 @@ def test_ellipsoid_traj():
         phase = cpg.get_phase_outputs()
         
         vel   = cpg.get_phase_velocities()
-        phase_norm, contact = planner.compute(phase)
-        traj, _ = builder.new_build_ellipsoid_trajectory(phase_norm, contact, vel)
-        # traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
+        # phase_norm, contact = planner.compute(phase)
+        # traj, _ = builder.new_build_ellipsoid_trajectory(phase_norm, contact, vel)
+        traj, _ = builder.build_ellipsoid_trajectory(phase, vel)
         foot_trajectories.append(traj)
         for i, foot in enumerate([Foot.FL, Foot.FR, Foot.RL, Foot.RR]):
             if -threshold < phase[i] < threshold:
@@ -655,10 +740,10 @@ def test_ellipsoid_traj():
     plt.show()
 
 def plot_single_gait_footfall():
-    gait = Gait.WALK
+    gait = Gait.AMBLE
     feet_order = [Foot.FL, Foot.FR, Foot.RR, Foot.RL]
-    duty_factor = 0.240
-    frequency = 1.500000
+    duty_factor = 0.40  
+    frequency = 1.75000
     dt = 0.002
     duty = duty_factor
     n_cycles = 4
@@ -697,7 +782,7 @@ def plot_single_gait_footfall():
 
     # Plot as image
     plt.figure(figsize=(10, 3))
-    plt.imshow(data, aspect='auto', cmap='gray_r', interpolation='nearest')
+    plt.imshow(data, aspect='auto', cmap='gray', interpolation='nearest')
 
     plt.yticks(
         range(len(feet_order)),
@@ -720,11 +805,12 @@ def plot_single_gait_footfall():
 def test_main():
     print("==================================================")
     print("Testing footfall pattern")
-    plot_single_gait_footfall()
+    #plot_single_gait_footfall()
 
     print("==================================================")
     print("Testing ellipsoid trajectory")
     # test_cpg_output()
+    #test_gait_transtion()
     test_ellipsoid_traj()
 
     print("==================================================")

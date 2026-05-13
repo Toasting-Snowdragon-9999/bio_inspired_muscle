@@ -39,7 +39,7 @@ class KuramotoCpg:
         self.time_passed = 0.0
 
         # Read gait phase offsets and frequency from RobotInterface
-        self.gait = self.robot_interface.current_gait    
+        self.gait = self.robot_interface.active_gait    
         if self.gait is None:
             # Remove this when transition is implemented since then the gait can dynamically be set and changed
             raise ValueError("RobotInterface must have a valid gait at CPG initialization.")
@@ -79,7 +79,7 @@ class KuramotoCpg:
     def reset(self) -> None:
         """Reset oscillator phases to the gait's initial values and clear accumulated state.
         Call before re-running the simulation with a new parameter set."""
-        gait_phases = np.array(self.robot_interface.current_gait.value)
+        gait_phases = np.array(self.robot_interface.active_gait.value)
         frequency = self.robot_interface.frequency
         for i, n in enumerate(self.neurons):
             n.phase = gait_phases[i]

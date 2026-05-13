@@ -32,12 +32,13 @@ class Gait:
     def __class_getitem__(cls, name):
         return cls._registry[name]
 
-Gait.WALK   = Gait("WALK",   (3*np.pi/2, np.pi/2, 0.0, np.pi))
-Gait.TROT   = Gait("TROT",   (0.0, np.pi, 0.0, np.pi))
-Gait.AMBLE  = Gait("AMBLE",  (np.pi/2, 3*np.pi/2, 0.0, np.pi))
-Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0, 0.6*np.pi))
-Gait.GALLOP = Gait("GALLOP", (0.0, 0.2*np.pi, 0.8*np.pi, np.pi))
-
+# FL - FR - RR - RL
+Gait.WALK   = Gait("WALK",   (3*np.pi/2, np.pi/2,    0.0,       np.pi))
+Gait.TROT   = Gait("TROT",   (0.0,       np.pi,      0.1*np.pi, 1.1*np.pi))
+Gait.AMBLE  = Gait("AMBLE",  (0.0,       np.pi,      1.1*np.pi, 0.1*np.pi))
+Gait.CANTER = Gait("CANTER", (1.3*np.pi, 0.85*np.pi, 0.0,       0.6*np.pi))
+Gait.GALLOP = Gait("GALLOP", (0.0,       0.2*np.pi,  0.8*np.pi, np.pi))
+ALL_GAITS = [Gait.WALK, Gait.TROT, Gait.AMBLE, Gait.CANTER, Gait.GALLOP]
 # GAIT_NOMINAL_FREQUENCY = {
 #     Gait.WALK: 1.4,
 #     Gait.TROT: 1.95,
@@ -71,6 +72,12 @@ class State:
     def __str__(self):
         return f"State(mode={self.mode}, gait={self.gait}, frequency={self.frequency})"
 
+class GaitFreq(Enum):
+    WALK = 1.4
+    AMBLE = 1.7
+    TROT = 1.95
+    CANTER = 2.4
+    GALLOP = 3.0
 
 class Joint(Enum):
     # Front legs
@@ -136,6 +143,7 @@ class RobotInterface:
 
     def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG, duty_factor: float = 0.5):
         self.robot_state = RobotState(current_state=starting_state, previous_state=None, next_state=None)
+        self._active_gait = starting_state.gait
         self._joint_positions: dict[Joint, float] = {}
         self._joint_velocities: dict[Joint, float] = {}
         self._body_position: list[float] = []
@@ -155,7 +163,7 @@ class RobotInterface:
         self._cpg_alpha = 0.0
         self._cpg_transition_speed = 0.5
         self._body_velocity = 0.0
-        self._target_speed = 0.5
+        self._target_speed = 0.15
         self._expected_footfall: dict[Foot, int] = {}  # Updated by CPG output for use in PD control and logging
         # Actual per-foot ground contact (1 = stance, 0 = swing). Synced every
         # mj_step from MuJoCo contact pairs in MujocoSim._sync_robot_interface.
@@ -166,8 +174,17 @@ class RobotInterface:
         # stability estimator is wired up. 0.75 falls in the 'stable' band.
         self._stability_metric = 0.75
         self._current_traj_params = None
+        self._active_traj_params = None
         self._next_traj_params = None
     
+    @property
+    def active_gait(self) -> Gait:
+        return self._active_gait
+    
+    @active_gait.setter
+    def active_gait(self, gait: Gait):
+        self._active_gait = gait
+
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
         return self._trajectory_method
@@ -193,6 +210,22 @@ class RobotInterface:
     @current_traj_params.setter
     def current_traj_params(self, params):
         self._current_traj_params = params
+
+    @property
+    def next_traj_params(self):
+        return self._next_traj_params
+    
+    @next_traj_params.setter
+    def next_traj_params(self, params):
+        self._next_traj_params = params
+
+    @property
+    def active_traj_params(self):
+        return self._active_traj_params
+    
+    @active_traj_params.setter
+    def active_traj_params(self, params):
+        self._active_traj_params = params
 
     @property
     def duty_factor(self) -> float:
@@ -259,7 +292,9 @@ class RobotInterface:
     
     @property
     def next_gait(self) -> Gait:
-        return self.robot_state.next_state.gait if self.robot_state else None
+        if not self.robot_state:
+            return None
+        return self.robot_state.next_state.gait if self.robot_state.next_state else None
     
     @next_gait.setter
     def next_gait(self, gait: Gait):
@@ -445,6 +480,13 @@ class RobotInterface:
         if self.robot_state:
             new_state = State(mode=self.robot_state.current_state.mode, gait=new_gait, frequency=self.robot_state.current_state.frequency)
             self.update_state(new_state)
+            # Keep _active_gait in lockstep with current_state.gait. Without
+            # this, IKController.run()'s `cpg.set_gait(active_gait)` and
+            # KuramotoCpg.reset()'s `active_gait.value` read the stale gait
+            # captured at __init__ (or whatever the fuzzy controller last
+            # committed during a transition), so a manual gait swap from the
+            # GUI is silently ignored by the CPG.
+            self._active_gait = new_gait
         else:
             raise ValueError("Cannot update gait without an existing robot state. Please initialize the robot state first.")
 
@@ -459,10 +501,11 @@ class RobotInterface:
 
             if new_state is None:
                 new_state = self.robot_state.current_state if self.robot_state else None
+            else: 
+                self.robot_state.next_state = None  # Only consume when new_state is none
         
         self.robot_state.previous_state = self.robot_state.current_state
         self.robot_state.current_state = new_state
-        self.robot_state.next_state = None
 
     def set_next_state(self, next_state: State):
         if self.robot_state:

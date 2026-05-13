@@ -1,6 +1,6 @@
 from enum import auto
 import os, sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from numpy import angle
 
@@ -63,6 +63,18 @@ class EllipsoidConfig:
     rear_rotation: float = 0.0
     rear_skew:     float = 0.0
 
+    def keys(self):
+        return asdict(self).keys()
+
+    def values(self):
+        return asdict(self).values()
+
+    def items(self):
+        return asdict(self).items()
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
 class GaitScheduler:
     def __init__(self, robot_interface):
         self.robot_interface = robot_interface
@@ -95,6 +107,13 @@ class TrajectoryBuilder:
         """
         self.robot_interface = robot_interface
         self.robot_interface.current_traj_params = ellipsoid_config
+        # Seed `active_traj_params` from the same config. The trajectory
+        # builder's read path (new_build_ellipsoid_trajectory and the
+        # blended ellipsoid variant) indexes active_traj_params, which is
+        # otherwise None until the fuzzy controller completes its first
+        # transition — that would crash mjcb_control on the very first
+        # step. The fuzzy blender overwrites this during/after a transition.
+        self.robot_interface.active_traj_params = ellipsoid_config
         # Normalise width/height: if None or a bare scalar is passed, expand to a
         # per-foot dict so all internal code can always do self.width[foot] safely.
         _default_width  = {Foot.FL: 0.1,  Foot.FR: 0.1,  Foot.RL: 0.1,  Foot.RR: 0.1}
@@ -209,7 +228,7 @@ class TrajectoryBuilder:
         assert self.ellipsoid_config is not None
 
         FRONT_FEET = {Foot.FL, Foot.FR}
-        cfg = self.robot_interface.current_traj_params
+        cfg = self.robot_interface.active_traj_params
         duty = self.robot_interface.duty_factor
 
         foot_positions = {}
@@ -323,7 +342,7 @@ class TrajectoryBuilder:
         )
 
         FRONT_FEET = {Foot.FL, Foot.FR}
-        cfg: EllipsoidConfig = self.robot_interface.current_traj_params
+        cfg: EllipsoidConfig = self.robot_interface.active_traj_params
         blend = self.blend_sharpness   # tanh sharpness (shared with egg/oval)
         foot_positions:  dict[Foot, Coordinate] = {}
         foot_velocities: dict[Foot, Coordinate] = {}

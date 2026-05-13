@@ -1,9 +1,10 @@
 from pyexpat import model
 import os, sys
 import time
+import traceback
 from math import floor
 import numpy as np
-import mujoco as mj 
+import mujoco as mj
 from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -688,13 +689,39 @@ class MujocoSim:
         self.robot_interface.dt = self.model.opt.timestep
 
         # Control callback
+        # Captures any exception raised inside the controller chain
+        # (`_sync_robot_interface`, `controller.run`, torque application).
+        # Without this, an exception escaping into MuJoCo's C-side callback
+        # wrapper triggers `mju_error("Python exception raised")`, which
+        # under the default user-error handler terminates the whole
+        # subprocess with exit code 1 — masking the real Python traceback.
+        # We stash the exception in a closure variable, return cleanly so
+        # `mj_step` can finish, and re-raise from the outer loop where
+        # `_run_simulation`'s try/except can catch it and log a traceback.
+        _callback_exc: list[BaseException] = []
+
         def _control_callback(model, data):
-            self._sync_robot_interface()
-            controller.run()
-            if self.use_direct:
-                self._apply_controller_targets_directly()
-            else:
-                self._apply_controller_targets_torque()
+            if _callback_exc:
+                # Already failing this episode — short-circuit so we don't
+                # spam tracebacks for every remaining step before the outer
+                # loop notices and bails out.
+                return
+            try:
+                self._sync_robot_interface()
+                controller.run()
+                if self.use_direct:
+                    self._apply_controller_targets_directly()
+                else:
+                    self._apply_controller_targets_torque()
+            except BaseException as exc:
+                # Print immediately so the failure is visible even if the
+                # outer loop swallows the re-raise (e.g. caller catches and
+                # converts to a penalty dict). `print_exc` writes to the
+                # *current* sys.stderr — which under gait_env's verbose=False
+                # path is a StringIO, but verbose=True forwards to the real
+                # stderr so the LogConsole sees it.
+                traceback.print_exc()
+                _callback_exc.append(exc)
 
         mj.set_mjcb_control(_control_callback if controller is not None else None)
 
@@ -705,6 +732,9 @@ class MujocoSim:
         warmup_end = self.data.time + warmup
         while self.data.time < warmup_end:
             mj.mj_step(self.model, self.data)
+            if _callback_exc:
+                mj.set_mjcb_control(None)
+                raise _callback_exc[0]
 
         # ── Measurement phase ──
         self._energy = 0.0
@@ -728,6 +758,12 @@ class MujocoSim:
         measure_end = self.data.time + sim_length
         while self.data.time < measure_end:
             mj.mj_step(self.model, self.data)
+            if _callback_exc:
+                # Controller raised — surface the original exception so the
+                # caller (gait_env._run_simulation) can convert it to a
+                # penalty dict and the search keeps going.
+                mj.set_mjcb_control(None)
+                raise _callback_exc[0]
             self._accumulate_energy()
 
             # Body tilt from rotation matrix
