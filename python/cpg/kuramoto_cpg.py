@@ -1,6 +1,7 @@
 import os, sys
 import numpy as np
 from dataclasses import dataclass
+from scipy.optimize import root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_CNT, NEURON_TO_FOOT_DICT
@@ -140,6 +141,45 @@ class KuramotoCpg:
         for i, n in enumerate(self.neurons):
             n.phase = thetas[i]
 
+    def trapezoidal_integration(self, dt: float) -> None:
+        """
+        Advance oscillator phases using the implicit trapezoidal method.
+        """
+
+        thetas = np.array([n.phase for n in self.neurons])
+
+        # f(t_n, y_n)
+        f_n = self.derivatives(thetas)
+
+        # Explicit Euler initial guess
+        theta_guess = thetas + dt * f_n
+
+        # Residual of trapezoidal equation
+        def phi(theta_new):
+            return (
+                theta_new
+                - thetas
+                - 0.5 * dt * (
+                    f_n + self.derivatives(theta_new)
+                )
+            )
+
+        sol = root(phi, theta_guess)
+
+        if not sol.success:
+            raise RuntimeError("Trapezoidal Newton solve failed")
+
+        theta_new = sol.x
+
+        # Approximate derivative used for plotting/logging
+        self.d_theta = (
+            theta_new - thetas
+        ) / dt
+
+        # Update neuron phases
+        for i, n in enumerate(self.neurons):
+            n.phase = theta_new[i]
+
     def run(self) -> None:
         """
         Advance the CPG one timestep and update foot position targets.
@@ -149,7 +189,7 @@ class KuramotoCpg:
         dt = self.robot_interface.dt
         self.time_passed += dt
 
-        self.rk4_integration(dt)
+        self.trapezoidal_integration(dt)
 
     def get_phase_outputs(self) -> np.ndarray:
         """Return current phase of each oscillator, for graph overlay."""

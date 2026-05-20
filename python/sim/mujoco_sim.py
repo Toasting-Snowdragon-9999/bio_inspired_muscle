@@ -38,7 +38,7 @@ class MujocoSim:
         # Will be set during init_graphics
         self.cam = None
         self.scene = None
-        
+
         # Controller keyboard callback
         self.controller_keyboard_callback = None
 
@@ -76,7 +76,7 @@ class MujocoSim:
 
     def use_direct_control(self):
         self.use_direct = True
-    
+
     def set_camera_follow(self, enabled: bool):
         """Enable or disable camera following the robot."""
         self.follow_robot = bool(enabled)
@@ -93,10 +93,10 @@ class MujocoSim:
         opt = mj.MjvOption()
         mj.mjv_defaultCamera(self.cam)
         self.cam.azimuth=90
-        self.cam.elevation=0.5 
+        self.cam.elevation=0.5
         self.cam.distance=4
         mj.mjv_defaultOption(opt)
-        
+
         self.scene = mj.MjvScene(self.model, maxgeom=10000)
         context = mj.MjrContext(self.model, mj.mjtFontScale.mjFONTSCALE_150.value)
 
@@ -144,7 +144,7 @@ class MujocoSim:
             setattr(self, attr, fig)
 
         self._fig_pnt = 0
-    
+
     def _init_joint_figures(self):
         """Create figure for joint position visualization."""
         fig = mj.MjvFigure()
@@ -176,7 +176,7 @@ class MujocoSim:
 
         self.fig_joints = fig
         self._joint_fig_pnt = 0
-    
+
     def _init_joint_sliders(self):
         self.slide_joints = []
         self._joint_names = []
@@ -261,7 +261,7 @@ class MujocoSim:
             self.fig_joints.linedata[line_i][2*(self._joint_history-1)+1] = float(value)
 
         self._joint_fig_pnt += 1
-    
+
     def _update_joint_sliders(self):
         if self.slide_joints is None:
             return
@@ -309,7 +309,7 @@ class MujocoSim:
             # Knee plot: above the hip plot
             knee_rect = mj.MjrRect(viewport_width - fig_w, fig_h, fig_w, fig_h)
             mj.mjr_figure(knee_rect, self.fig_knee, context)
-        
+
         if self.enabled_joint_graph:
             self._update_joint_figures()
 
@@ -318,7 +318,7 @@ class MujocoSim:
 
             joint_rect = mj.MjrRect(0, 0, fig_w, fig_h)
             mj.mjr_figure(joint_rect, self.fig_joints, context)
-        
+
         elif self.enabled_joint_sliders:
             self._update_joint_sliders()
 
@@ -383,10 +383,10 @@ class MujocoSim:
 
         pos = {joint: float(self.data.sensordata[idx])
                for joint, idx in SENSOR_POS_DICT.items()}
-        
+
         vel = {joint: float(self.data.sensordata[idx])
                for joint, idx in SENSOR_VEL_DICT.items()}
-        
+
         ri.joint_positions = pos
         ri.joint_velocities = vel
         ri.body_position = self.data.body("base_link").xpos.tolist()
@@ -402,7 +402,7 @@ class MujocoSim:
         ri.hip_position = {
             hip: self.data.body(hip.value).xpos.tolist()
             for hip in Hip
-        } 
+        }
 
         hip_stance = {
             hip: [pos[i] - ri.body_position[i] for i in range(3)]
@@ -849,7 +849,7 @@ class MujocoSim:
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
-        
+
         # Pass keyboard event to controller if registered
         if self.controller_keyboard_callback is not None:
             self.controller_keyboard_callback(window, key, scancode, act, mods)
@@ -908,10 +908,10 @@ class MujocoSim:
         action = mj.mjtMouse.mjMOUSE_ZOOM
         mj.mjv_moveCamera(self.model, action, 0.0, -0.05 *
                         yoffset, self.scene, self.cam)
-    
+
     def remove_gravity(self):
         self.model.opt.gravity[:] = [0.0, 0.0, 0.0]
-    
+
     def enable_air_mode(self, height=1.0):
         if not self.dispense_in_air:
             self.height = height
@@ -922,13 +922,13 @@ class MujocoSim:
         self.data.qvel[0:6] = 0.0
         self.data.qpos[2] = height
         mj.mj_forward(self.model, self.data)
-    
+
     def enable_graph(self):
         if self.fig_hip is None:
             self._init_figures()
             self.enabled_graph = True
             # self.enabled_joint_graph = False
-    
+
     def enable_joint_graph(self):
         if self.fig_joints is None:
             self._init_joint_figures()
@@ -940,7 +940,7 @@ class MujocoSim:
     def enable_joint_sliders(self):
         if self.slide_joints is None:
             self._init_joint_sliders()
- 
+
         self.enabled_joint_sliders = True
         self.enabled_joint_graph = False
 
@@ -961,7 +961,7 @@ class MujocoSim:
         positive_power = np.maximum(mechanical_power, 0.0)
 
         self._energy += np.sum(positive_power) * dt
-    
+
     def compute_CoT(self):
         """
         Compute Cost of Transport (dimensionless).

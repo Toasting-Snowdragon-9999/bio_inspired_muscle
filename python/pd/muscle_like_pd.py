@@ -67,10 +67,6 @@ class MuscleLikePD:
         outputs: dict[Foot, np.ndarray] = {}
 
         for foot, joints in FOOT_TO_JOINT_DICT.items():
-
-            #
-            # Build COLUMN vectors: shape (3,1)
-            #
             q_vec = np.array(
                 [[q[j]] for j in joints],
                 dtype=float
@@ -91,9 +87,6 @@ class MuscleLikePD:
                 dtype=float
             )
 
-            #
-            # Update adaptive impedance
-            #
             K, B = self.impedance_controller[foot].update_impedance(
                 q=q_vec,
                 q_d=qd_vec,
@@ -101,25 +94,15 @@ class MuscleLikePD:
                 dq_d=dqd_vec
             )
 
-            #
-            # Errors
-            #
-            e = qd_vec - q_vec
-            de = dqd_vec - dq_vec
-
-            #
-            # Torque computation
-            #
+            e = self.impedance_controller[foot].gen_pos_err
+            de = self.impedance_controller[foot].gen_vel_err
+            # e = qd_vec - q_vec        # Correct old 
+            # de = dqd_vec - dq_vec     # Correct old 
+            # e = q_vec - qd_vec      # Crazy bot
+            # de = dq_vec - dqd_vec   # no 
+    
             tau = (K @ e) + (B @ de)
-
-            #
-            # Convert back to flat vector (3,)
-            #
             tau = tau.flatten()
-
-            #
-            # Safety clipping
-            #
             tau = np.clip(
                 tau,
                 -ACTUATOR_TORQUE_LIMIT,

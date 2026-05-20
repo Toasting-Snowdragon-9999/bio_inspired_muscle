@@ -10,13 +10,13 @@ from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, Ellips
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
 
-def test_cpg_output():
-    robot_interface = RobotInterface(starting_state=State(gait=Gait.WALK, mode=Mode.MOVING, frequency=0.5))
+def test_cpg_output(gait, freq):
+    robot_interface = RobotInterface(starting_state=State(gait=gait, mode=Mode.MOVING, frequency=freq))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
     traj = TrajectoryBuilder(robot_interface)
 
-    second = 5.0 
+    second = 2.0 
     steps = int((second) / robot_interface.dt)
     output = {}
     for step in range(steps):
@@ -809,9 +809,25 @@ def test_main():
 
     print("==================================================")
     print("Testing ellipsoid trajectory")
-    # test_cpg_output()
+    freq = 1.40
+    gait = Gait.WALK
+    test_cpg_output(gait, freq)
+    freq = 1.750
+    gait = Gait.AMBLE
+    test_cpg_output(gait, freq)
+    freq = 2.20
+    gait = Gait.TROT
+    test_cpg_output(gait, freq)
+    freq = 2.350
+    gait = Gait.CANTER
+    test_cpg_output(gait, freq)
+    freq = 2.5
+    gait = Gait.GALLOP
+    test_cpg_output(gait, freq)
+
+
     #test_gait_transtion()
-    test_ellipsoid_traj()
+    # test_ellipsoid_traj()
 
     print("==================================================")
     return

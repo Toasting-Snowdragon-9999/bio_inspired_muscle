@@ -37,10 +37,19 @@ class ada_imp_ctrl():
 
             self.k_mat = (self.gen_track_err @ self.gen_pos_err.T) / self.gen_ad_factor
             self.b_mat = (self.gen_track_err @ self.gen_vel_err.T) / self.gen_ad_factor
-        else: 
+        else:
             # Normal non adaptive pd control, with fixed gains.
-            kp = 90.0
-            kd = 15.0
+            # NOTE on signs: gen_pos_err/gen_vel_err in this module use (q - q_d) because
+            # the OIAC outer-product formula relies on that convention. The *consumer*
+            # (muscle_like_pd.py) applies the control law as tau = K @ (q_d - q) + B @ (dq_d - dq),
+            # so the positive diagonal K, B below are stabilising.
+            self.q = np.asarray(q).reshape(-1, 1)
+            self.q_d = np.asarray(q_d).reshape(-1, 1)
+            self.dq = np.asarray(dq).reshape(-1, 1)
+            self.dq_d = np.asarray(dq_d).reshape(-1, 1)
+            kp = 40.0
+            kd = 2.0  # was 15.0 — too high; with MAX_JOINT_VEL=5 rad/s and 23.7 Nm motor limit,
+                      # velocity errors >1.5 rad/s saturate the actuator and cause overshoot spasms.
             self.k_mat = np.diag(np.full(self.DOF, kp))
             self.b_mat = np.diag(np.full(self.DOF, kd))
 
@@ -48,11 +57,11 @@ class ada_imp_ctrl():
 
     @property
     def gen_pos_err(self):#position error, see Eq. (1)
-        return (self.q - self.q_d)
+        return (self.q_d - self.q)
 
     @property
     def gen_vel_err(self):#velocity error, see Eq. (1)
-        return (self.dq - self.dq_d)
+        return (self.dq_d - self.dq)
 
     @property
     def gen_track_err(self):#tracking error, see Eq. (3)
