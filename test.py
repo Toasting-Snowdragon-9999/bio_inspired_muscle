@@ -84,15 +84,26 @@ for step in range(steps):
 # Plot phases
 # -------------------------------------------------
 
+base_size = 18
+plt.rcParams.update({
+    'font.size': base_size,        # Default text size
+    'axes.titlesize': base_size + 5,   # Title size
+    'axes.labelsize': base_size + 4,   # X and Y label size
+    'xtick.labelsize': base_size - 2,  # X tick size
+    'ytick.labelsize': base_size - 2,  # Y tick size
+    'legend.fontsize': base_size + 2   # Legend size
+})
+
 plt.figure(figsize=(10, 5))
 
 for i in range(N):
     plt.plot(time, theta_history[:, i], label=f"Oscillator {i}")
 
-plt.xlabel("Time [s]")
-plt.ylabel("Phase [rad]")
+plt.xlabel("Time (seconds)")
+plt.ylabel(r'$\cos(\theta)$')
 plt.title("Kuramoto Oscillator Phase Evolution")
-plt.legend()
+plt.legend(loc='center right')
+plt.tight_layout()
 plt.grid(True)
 
 plt.show()

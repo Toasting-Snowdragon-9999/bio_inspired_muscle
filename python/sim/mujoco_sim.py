@@ -38,6 +38,7 @@ class MujocoSim:
         # Will be set during init_graphics
         self.cam = None
         self.scene = None
+        self.controller = None
 
         # Controller keyboard callback
         self.controller_keyboard_callback = None
@@ -60,8 +61,11 @@ class MujocoSim:
         # for computing CoT
         self._energy = 0.0
         self._start_x = None
+        self._start_y = None
         self._robot_mass = None
         self.use_bias_compensation = True
+        self.print_cot = False
+        self._starting_pos = None
 
         # geom-id → Foot map for actual-contact detection. Built lazily on the
         # first call to `_sync_robot_interface` because the model is parsed
@@ -70,6 +74,60 @@ class MujocoSim:
         # `robot_interface.contact` (the actual-contact mirror of
         # `expected_footfall`) every mj_step.
         self._foot_geom_to_foot: dict[int, Foot] = {}
+
+    @property
+    def starting_pos(self):
+        return self._starting_pos
+
+    @starting_pos.setter
+    def starting_pos(self, starting_state):
+        self.data.qpos[0:3] = starting_state
+        self._starting_pos = starting_state
+
+    # @starting_pos.setter
+    # def starting_pos(self, starting_state):
+
+    #     print("\n========== SETTING SPAWN ==========")
+
+    #     print("Requested starting_state:", starting_state)
+
+    #     print("BEFORE:")
+    #     print("qpos[0:7]:", self.data.qpos[0:7])
+    #     print("qvel[0:6]:", self.data.qvel[0:6])
+
+    #     # Apply position
+    #     self.data.qpos[0:3] = starting_state
+
+    #     # Optional but VERY important for debugging
+    #     # Reset velocities to avoid explosive impulses
+    #     self.data.qvel[:] = 0.0
+
+    #     print("\nAFTER POSITION WRITE:")
+    #     print("qpos[0:7]:", self.data.qpos[0:7])
+    #     print("qvel[0:6]:", self.data.qvel[0:6])
+
+    #     # Check terrain/body overlap after forward dynamics
+    #     import mujoco as mj
+    #     mj.mj_forward(self.model, self.data)
+
+    #     print("\nAFTER mj_forward:")
+    #     print("base xpos:", self.data.body("base_link").xpos)
+    #     print("base quat:", self.data.qpos[3:7])
+    #     print("ncon:", self.data.ncon)
+
+    #     # Print active contacts
+    #     for i in range(self.data.ncon):
+    #         con = self.data.contact[i]
+    #         print(
+    #             f"contact {i}: "
+    #             f"geom1={con.geom1}, "
+    #             f"geom2={con.geom2}, "
+    #             f"dist={con.dist}"
+    #         )
+
+    #     self._starting_pos = starting_state
+
+    #     print("===================================\n")
 
     def get_model_and_data(self):
         return self.model, self.data
@@ -489,6 +547,21 @@ class MujocoSim:
     def set_bias_compensation(self, enabled: bool = True):
         self.use_bias_compensation = bool(enabled)
 
+    def reset(self):
+        """Reset any internal state in the MujocoSim instance (e.g. for a new sim run)."""
+        self._energy = 0.0
+        if self.controller is not None and hasattr(self.controller, 'reset'):
+            self.controller.reset()
+            self.robot_interface.cpg_alpha = 0.00
+        self.starting_pos = self._starting_pos
+        self.next_cot_print_time = self.sim_length if self.sim_length > 0 else None
+
+    def reset_cot(self):    
+        """Reset CoT tracking state (energy accumulator and start position)."""
+        self._energy = 0.0
+        self._start_x = self.data.qpos[0]
+        self._start_y = self.data.qpos[1]
+
     def sim(self, controller=None, sim_length=-1, slow_factor=1.0, warmup: float = 2.0):
         """
         Main simulation loop (frame-rate independent, deterministic physics).
@@ -517,6 +590,7 @@ class MujocoSim:
                 self.controller_keyboard_callback = controller.keyboard_callback
             if hasattr(controller, 'get_oscillator_outputs'):
                 self._fig_controller = controller
+            self.controller = controller
 
         # --- Control callback ---
         def _control_callback(model, data):
@@ -536,8 +610,11 @@ class MujocoSim:
         # Energy/distance tracking is deferred until after warmup
         self._energy = 0.0
         self._start_x = None
+        self._start_y = None
         metrics_started = False
-
+        self.next_cot_print_time = warmup + sim_length if sim_length > 0 else None
+        self.sim_length = sim_length
+        iteration = 1
         # --- Main loop ---
         while not glfw.window_should_close(window):
             frame_start = time.perf_counter()
@@ -555,13 +632,22 @@ class MujocoSim:
                     metrics_started = True
                     self._energy = 0.0
                     self._start_x = self.data.qpos[0]
+                    self._start_y = self.data.qpos[1]
                 if metrics_started:
                     self._accumulate_energy()
                 accumulator -= dt
 
             # --- Exit condition ---
-            if sim_length > 0 and self.data.time >= sim_length:
-                break
+            if self.sim_length > 0 and self.data.time >= self.next_cot_print_time:
+                if self.print_cot is False:
+                    print(iteration, " CoT: ", self.compute_CoT())
+                    self.reset_cot()
+                    self.next_cot_print_time += self.sim_length
+                    iteration += 1
+
+                self.print_cot = True
+            else: 
+                self.print_cot = False
 
             # --- Rendering ---
             self.simulation_step(window, self.model, self.data, opt, scene, cam, context)
@@ -637,7 +723,7 @@ class MujocoSim:
         # position, not the drop point.
         self._energy = 0.0
         self._start_x = self.data.qpos[0]
-
+        self._start_y = self.data.qpos[1]
         measure_end = self.data.time + sim_length
         while self.data.time < measure_end:
             mj.mj_step(self.model, self.data)
@@ -739,6 +825,7 @@ class MujocoSim:
         # ── Measurement phase ──
         self._energy = 0.0
         self._start_x = self.data.qpos[0]
+        self._start_y = self.data.qpos[1]
         tilt_sum = 0.0
         step_count = 0
         survived = True
@@ -820,7 +907,10 @@ class MujocoSim:
         # Compute metrics
         cot = self.compute_CoT()
         current_x = self.data.qpos[0]
-        distance = current_x - self._start_x if self._start_x is not None else 0.0
+        current_y = self.data.qpos[1]
+        x_dis = current_x - self._start_x if self._start_x is not None else 0.0
+        y_dis = current_y - self._start_y if self._start_y is not None else 0.0
+        distance = np.hypot(x_dis, y_dis)
         velocity = distance / sim_length if sim_length > 0 else 0.0
         avg_tilt = tilt_sum / step_count if step_count > 0 else 0.0
 
@@ -849,6 +939,7 @@ class MujocoSim:
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
+            self.reset()
 
         # Pass keyboard event to controller if registered
         if self.controller_keyboard_callback is not None:
@@ -966,12 +1057,16 @@ class MujocoSim:
         """
         Compute Cost of Transport (dimensionless).
         """
-        if self._start_x is None:
-            print("Error: _start_x is None, cannot compute CoT.")
+        if self._start_x is None or self._start_y is None:
+            print("Error: _start_x or _start_y is None, cannot compute CoT.")
             return None
 
         current_x = self.data.qpos[0]   # base x position
-        distance = current_x - self._start_x
+        current_y = self.data.qpos[1]   # base y position
+
+        x_dis = current_x - self._start_x
+        y_dis = current_y - self._start_y
+        distance = np.hypot(x_dis, y_dis) # Does sqrt(x_dis² + y_dis²) to get straight-line distance in the horizontal plane
 
         if distance <= 0:
             # Robot did not move forward — CoT undefined (likely fell over)

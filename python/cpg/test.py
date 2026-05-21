@@ -10,6 +10,16 @@ from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, Ellips
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
 
+base_size = 18
+plt.rcParams.update({
+    'font.size': base_size,        # Default text size
+    'axes.titlesize': base_size + 5,   # Title size
+    'axes.labelsize': base_size + 4,   # X and Y label size
+    'xtick.labelsize': base_size - 2,  # X tick size
+    'ytick.labelsize': base_size - 2,  # Y tick size
+    'legend.fontsize': base_size + 2   # Legend size
+})
+
 def test_cpg_output(gait, freq):
     robot_interface = RobotInterface(starting_state=State(gait=gait, mode=Mode.MOVING, frequency=freq))
     robot_interface.dt = 0.001
@@ -31,8 +41,9 @@ def test_cpg_output(gait, freq):
         plt.plot(time, [output[step][i] for step in range(steps)], label=f'{foot.name}', linestyle=linestyle)
     plt.title('Kuramoto CPG Neuron Outputs Over Time')
     plt.xlabel('Time (seconds)')
-    plt.ylabel('Neuron Output')
-    plt.legend()
+    plt.ylabel(r'$\cos(\theta)$')
+    plt.legend(loc='center right')
+    plt.tight_layout()
     plt.grid()
     plt.show()
 
