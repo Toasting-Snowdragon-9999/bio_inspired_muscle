@@ -72,8 +72,9 @@ class IKController:
         for foot in Foot:
             self.solvers[foot] = LevenbergMarquardtIK(foot)
             self.prev_q[foot] = home_position[foot]
-
         # ===== IK END =====
+        # self.prev_cpg_output = None
+        # self.iteration = 0
 
     def reset(self) -> None:
         """Reset all stateful controller components (CPG phases, IK warm-start).
@@ -120,9 +121,29 @@ class IKController:
         self.cpg.set_gait(self.robot_interface.active_gait)  # Update CPG gait from robot_interface (settable via property)
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
+        cpg_phase = self.cpg.get_oscillator_outputs()
+        self.robot_interface.cpg_phase = {foot: float(phase) for foot, phase in zip(Foot, cpg_phase)}
+
         phase_velocities = self.cpg.get_phase_velocities()
 
+        # cpg_output = self.cpg.get_oscillator_outputs()
+        # if self.prev_cpg_output is not None:
+        #     prev = float(self.prev_cpg_output[0])
+        #     curr = float(cpg_output[0])
+        #     crossed = prev <= 0.0 and curr > 0.0
+            
+        #     if crossed:
+        #         if self.iteration > 100:
+        #             self.robot_interface.new_gait_cycle = crossed
+        #             self.iteration = 0
+        #         self.iteration += 1
+        #     elif not crossed:
+        #         self.robot_interface.new_gait_cycle = False
+                
+        # self.prev_cpg_output = cpg_output.copy()
+
         _, contact = self.planner.compute(phase_outputs)
+
         self.robot_interface.expected_footfall = contact  # Update contact state in robot_interface for use in PD control and logging
 
         foot_targets, foot_velocities = self.traj_builder.build_trajectory(phase_outputs, phase_velocities)

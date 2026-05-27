@@ -208,6 +208,6 @@ class KuramotoCpg:
         outputs = []
         for i in range(self.neurons_cnt):
             phase = self.neurons[i].phase
-            outputs.append(max(np.cos(phase), 0.0)) # Clamp to [0, 1]
-
+            # outputs.append(max(np.cos(phase), 0.0)) # Clamp to [0, 1]
+            outputs.append(np.cos(phase))
         return outputs

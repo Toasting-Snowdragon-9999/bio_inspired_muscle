@@ -20,18 +20,37 @@ plt.rcParams.update({
     'legend.fontsize': base_size + 2   # Legend size
 })
 
-def test_cpg_output(gait, freq):
+def apply_duty_factor(phase: float, duty: float) -> float:
+    """
+    Warp phase according to duty factor.
+    Input:  phase in radians [0, 2π)
+    Output: warped phase in radians [0, 2π)
+    """
+    phi = (phase % (2 * np.pi)) / (2 * np.pi)
+
+    if phi < duty:
+        gait_phi = 0.5 * (phi / duty)
+    else:
+        gait_phi = 0.5 + 0.5 * ((phi - duty) / (1 - duty))
+
+
+    return gait_phi * 2 * np.pi
+
+def test_cpg_output(gait, freq, duty):
     robot_interface = RobotInterface(starting_state=State(gait=gait, mode=Mode.MOVING, frequency=freq))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
-    traj = TrajectoryBuilder(robot_interface)
-
     second = 2.0 
     steps = int((second) / robot_interface.dt)
     output = {}
     for step in range(steps):
         cpg.run()
-        output[step] = cpg.get_oscillator_outputs()
+        theta = cpg.get_phase_outputs()
+        theta_w = np.zeros_like(theta)
+        for i in range(len(theta)):
+            theta_w[i] = apply_duty_factor(theta[i], duty)
+        c = np.cos(theta_w)
+        output[step] = c
     time = np.arange(steps) * robot_interface.dt
     plt.figure(figsize=(10, 6))
     for i in range(cpg.neurons_cnt):
@@ -668,19 +687,23 @@ def test_ellipsoid_traj():
     # EllipsoidConfig now has independent front_* / rear_* parameters.
     # Front legs (FL, FR) and rear legs (RL, RR) can have different shapes.
     cfg = EllipsoidConfig(
-            front_x_fore   = 0.168100,  
-            front_x_hind   = 0.119400,
-            front_z_top    = 0.118300,
-            front_z_bottom = -0.027500,
-            front_rotation = 0.082300,
-            front_skew     = -0.022200,
+            front_x_fore   = 0.123,  
+            front_x_hind   = 0.095,
+            front_z_top    = 0.104,
+            front_z_bottom = 0.025,
+            # front_rotation = 0.082300,
+            # front_skew     = -0.022200,
+            front_rotation = 0.0,
+            front_skew     = 0.0,
 
-            rear_x_fore    = 0.020700,
-            rear_x_hind    = 0.105600,
-            rear_z_top     = 0.089000,
-            rear_z_bottom  = 0.054400,
-            rear_rotation  = -0.065400,
-            rear_skew      = -0.035000,
+            rear_x_fore    = 0.075,
+            rear_x_hind    = 0.122,
+            rear_z_top     = 0.095,
+            rear_z_bottom  = 0.005,
+            # rear_rotation  = -0.065400,
+            # rear_skew      = -0.035000,
+            rear_rotation=0.0,
+            rear_skew=0.0
         )
     # duty_factor: fraction of cycle in stance (0.5 = symmetric, 0.7 = longer stance)
     builder = TrajectoryBuilder(robot_interface, ellipsoid_config=cfg, duty_factor=0.4)
@@ -820,25 +843,30 @@ def test_main():
 
     print("==================================================")
     print("Testing ellipsoid trajectory")
-    freq = 1.40
-    gait = Gait.WALK
-    test_cpg_output(gait, freq)
-    freq = 1.750
-    gait = Gait.AMBLE
-    test_cpg_output(gait, freq)
-    freq = 2.20
-    gait = Gait.TROT
-    test_cpg_output(gait, freq)
-    freq = 2.350
-    gait = Gait.CANTER
-    test_cpg_output(gait, freq)
-    freq = 2.5
-    gait = Gait.GALLOP
-    test_cpg_output(gait, freq)
+    # freq = 1.40
+    # duty = 0.20
+    # gait = Gait.WALK
+    # test_cpg_output(gait, freq, duty)
+    # freq = 1.750
+    # duty = 0.40
+    # gait = Gait.AMBLE
+    # test_cpg_output(gait, freq, duty)
+    # freq = 2.20
+    # duty = 0.50
+    # gait = Gait.TROT
+    # test_cpg_output(gait, freq, duty)
+    # freq = 2.350
+    # duty = 0.45
+    # gait = Gait.CANTER
+    # test_cpg_output(gait, freq, duty)
+    # freq = 2.5
+    # duty = 0.65
+    # gait = Gait.GALLOP
+    # test_cpg_output(gait, freq, duty)
 
 
     #test_gait_transtion()
-    # test_ellipsoid_traj()
+    test_ellipsoid_traj()
 
     print("==================================================")
     return

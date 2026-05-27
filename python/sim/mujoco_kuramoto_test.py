@@ -1,8 +1,14 @@
 import os
 import sys
 from enum import Enum
+import traceback
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
 from mujoco_sim import MujocoSim
 from cpg.trajectory_builder import EllipsoidConfig, OvalOffset
+import json
+from dataclasses import asdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from controllers.ik_controller import IKController
@@ -11,6 +17,8 @@ from shared_module.settings_loader import load_settings_from_file
 
 # TROT: freq = 2.2 Hz 
 # BOUND: freq = 5.0 Hz
+
+os.environ["G_MESSAGES_DEBUG"] = "none"
 
 class Terrain(Enum):
     flat = "Flat"
@@ -73,10 +81,159 @@ def get_sim_xml(terrain):
     elif terrain == Terrain.large_hills:
         return os.path.join(os.path.dirname(__file__), 'go2', 'scene_perlin_noise_large_mountain.xml')
 
+def compute_contact_statistics(footfall_comparison):
+    stats = {}
+
+    for foot in Foot:
+        actual = np.array([
+            sample["contact"][foot]
+            for sample in footfall_comparison
+        ])
+
+        expected = np.array([
+            sample["expected"][foot]
+            for sample in footfall_comparison
+        ])
+
+        correct = np.sum(actual == expected)
+        total = len(actual)
+
+        accuracy = correct / total
+
+        mae = np.mean(np.abs(actual - expected))
+
+        false_positive = np.sum((actual == 1) & (expected == 0))
+        false_negative = np.sum((actual == 0) & (expected == 1))
+
+        stats[foot] = {
+            "accuracy": accuracy,
+            "mae": mae,
+            "false_positive": false_positive,
+            "false_negative": false_negative
+        }
+
+        print(f"\n{foot.name}")
+        print(f"Accuracy: {accuracy:.3f}")
+        print(f"MAE: {mae:.3f}")
+        print(f"False positives: {false_positive}")
+        print(f"False negatives: {false_negative}")
+
+    return stats
+
+def compute_duty_cycles(footfall_comparison, dt):
+    if len(footfall_comparison) == 0:
+        return {}
+    
+    contact_history = defaultdict(list)
+    for sample in footfall_comparison:
+        contact = sample["contact"]
+        for foot in Foot:
+            contact_history[foot].append(
+                int(contact.get(foot, 0))
+            )
+    duty_cycles = {}
+
+    for foot in Foot:
+        contacts = np.array(contact_history[foot])
+        stance_samples = np.sum(contacts == 0)
+        total_samples = len(contacts)
+        if total_samples == 0:
+            duty_cycles[foot] = 0.0
+            continue
+
+        stance_time = stance_samples * dt
+        total_time = total_samples * dt
+        duty_cycle = stance_time / total_time
+        duty_cycles[foot] = duty_cycle
+        print(f"Duty cycle for {foot.name}: {duty_cycle:.2f}")
+    return duty_cycles
+
+def plot_footfall(footfall_comparison, dt):
+    if footfall_comparison is not None:
+        time = np.arange(len(footfall_comparison)) * dt
+
+        fig, axs = plt.subplots(4, 1, figsize=(12, 8), sharex=True)
+
+        for idx, foot in enumerate(Foot):
+
+            actual = [
+                sample["contact"][foot]
+                for sample in footfall_comparison
+            ]
+
+            expected = [
+                sample["expected"][foot]
+                for sample in footfall_comparison
+            ]
+
+            axs[idx].plot(
+                time,
+                actual,
+                label=f"{foot.name} Actual",
+                linewidth=2
+            )
+
+            axs[idx].plot(
+                time,
+                expected,
+                '--',
+                label=f"{foot.name} Expected",
+                linewidth=2
+            )
+
+            axs[idx].set_ylim(-0.1, 1.1)
+            axs[idx].set_ylabel(foot.name)
+            axs[idx].grid(True)
+            axs[idx].legend(loc="upper right")
+
+        axs[-1].set_xlabel("Time [s]")
+
+        plt.suptitle("Expected vs Actual Foot Contact")
+        plt.tight_layout()
+        plt.show()
+
+def save_robot_data(robot_data_list, filename="robot_data.json"):
+    """
+    Save a list of RobotData entries to a JSON file.
+
+    Parameters
+    ----------
+    robot_data_list : list[RobotData]
+        List of RobotData dataclass instances.
+
+    filename : str
+        Output filename.
+    """
+
+    serializable_data = []
+
+    for entry in robot_data_list:
+
+        entry_dict = asdict(entry)
+
+        # Convert Foot enum keys into strings
+        entry_dict["knee_torque"] = {
+            foot.name: value
+            for foot, value in entry.knee_torque.items()
+        }
+
+        entry_dict["cpg_phases"] = {
+            foot.name: value
+            for foot, value in entry.cpg_phases.items()
+        }
+
+        serializable_data.append(entry_dict)
+
+    with open(filename, "w") as f:
+        json.dump(serializable_data, f, indent=4)
+
+    print(f"Saved {len(serializable_data)} entries to '{filename}'")
+
 def elip_traj_test():
     try: 
         gait = Gait.TROT
-        terrain = Terrain.very_rough
+
+        terrain = Terrain.flat
         cfg, freq, duty_factor = load_settings_from_file(gait)
         robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=gait, frequency=freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=duty_factor)
         # robot_interface.enable_cpg = False
@@ -86,11 +243,11 @@ def elip_traj_test():
         z_pos = set_spawn(sim, terrain)
         # sim.enable_air_mode(z_pos)
         # # Hard
-        # params = (
-        #     0.2,  # a: learning rate of impedance adaptation
-        #     5.0,  # b: sensitivity of impedance adaptation to velocity error
-        #     0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
-        # )
+        params = (
+            0.2,  # a: learning rate of impedance adaptation
+            5.0,  # b: sensitivity of impedance adaptation to velocity error
+            0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
+        )
         # Soft
         # params = (
         #     0.1,  # a: learning rate of impedance adaptation
@@ -98,24 +255,41 @@ def elip_traj_test():
         #     0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
         # )
         # Best 
-        params = (
-            0.1,  # a: learning rate of impedance adaptation
-            20.0,  # b: sensitivity of impedance adaptation to velocity error
-            0.07  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
-        )
+        # params = (
+        #     0.1,  # a: learning rate of impedance adaptation
+        #     20.0,  # b: sensitivity of impedance adaptation to velocity error
+        #     0.07  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
+        # )
+        # Params for walk
+        # params = (
+        #     0.2,  # a: learning rate of impedance adaptation
+        #     7.0,  # b: sensitivity of impedance adaptation to velocity error
+        #     0.03  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
+        # )
         controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, ellipsoid_config=cfg)
         
     except Exception as e:
         print(f"Error during setup: {e}")
+        traceback.print_exc()
         return
 
     try:
-        sim.sim(controller=controller, sim_length=4, slow_factor=1.0)
+        sim.sim(controller=controller, sim_length=11, slow_factor=1.0)
     except Exception as e:
         print(f"Error during simulation: {e}")
+        traceback.print_exc()
 
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
+    oiac_filename = "data/oiac_data.json"
+    pd_filename = "data/pd_data.json"
+    save_robot_data(sim.robot_interface.data_list, filename=oiac_filename)
+
+    footfall_comparison = sim.foot_fall_comparison
+    # if footfall_comparison is not None:
+    #     compute_duty_cycles(footfall_comparison, sim.robot_interface.dt)
+    #     plot_footfall(footfall_comparison, sim.robot_interface.dt)
+    #     compute_contact_statistics(footfall_comparison)
 
 def main():
     elip_traj_test()
@@ -124,4 +298,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

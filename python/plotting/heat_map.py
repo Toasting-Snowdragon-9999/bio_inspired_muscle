@@ -1,12 +1,23 @@
-import matplotlib.pyplot as plt
+import re
 import numpy as np
-from dataclasses import dataclass, field
+import matplotlib.pyplot as plt
+
+from dataclasses import dataclass
 from typing import List
 
 
+base_size = 20
+plt.rcParams.update({
+    'font.size': base_size,        # Default text size
+    'axes.titlesize': base_size + 5,   # Title size
+    'axes.labelsize': base_size + 4,   # X and Y label size
+    'xtick.labelsize': base_size + 2,  # X tick size
+    'ytick.labelsize': base_size + 2,  # Y tick size
+    'legend.fontsize': base_size + 2   # Legend size
+})
+
 @dataclass
 class GaitFreqData:
-    """Stores COT (or any metric) values for a single gait across multiple frequencies."""
     gait_name: str
     frequency_labels: List[str]
     values: List[float]
@@ -19,65 +30,208 @@ class GaitFreqData:
             )
 
 
-def build_heatmap_from_gaits(gait_data_list: List[GaitFreqData]) -> "HeatMap":
-    """Construct a HeatMap from a list of GaitFreqData entries.
-    Rows = gaits, Columns = frequencies.
-    """
-    # Validate all entries share the same frequency labels
-    freq_labels = gait_data_list[0].frequency_labels
-    for g in gait_data_list[1:]:
-        if g.frequency_labels != freq_labels:
-            raise ValueError("All GaitFreqData entries must share the same frequency_labels.")
-
-    matrix = np.array([g.values for g in gait_data_list])
-    gait_names = [g.gait_name for g in gait_data_list]
-    hm = HeatMap(matrix)
-    hm._default_y_labels = gait_names
-    hm._default_x_labels = freq_labels
-    return hm
-
-
 class HeatMap:
     def __init__(self, data):
         self.data = data
-        # Optional default labels set by build_heatmap_from_gaits()
-        self._default_x_labels: List[str] | None = None
-        self._default_y_labels: List[str] | None = None
-
-    def reset(self):
-        self.data = np.zeros_like(self.data)
-
-    def update(self, new_data):
-        self.data = new_data
+        self._default_x_labels = None
+        self._default_y_labels = None
 
     def plot(self, x_labels=None, y_labels=None):
-        # Fall back to labels stored by build_heatmap_from_gaits() if none supplied
+
         x_labels = x_labels if x_labels is not None else self._default_x_labels
         y_labels = y_labels if y_labels is not None else self._default_y_labels
 
-        plt.imshow(self.data, cmap='Blues', interpolation='nearest')
-        plt.colorbar()
-        plt.title('Heat Map')
+        base_size = plt.rcParams['font.size']
+
+        width = max(
+            12,
+            self.data.shape[1] * (base_size * 0.35) * 0.2
+        )
+
+        height = max(
+            6,
+            self.data.shape[0] * (base_size * 0.22) * 0.2
+        )
+
+        plt.figure(figsize=(width, height))
+
+        plt.imshow(
+            self.data,
+            cmap='Blues',
+            interpolation='nearest',
+            vmin=0,
+            vmax=2,
+            aspect='auto'
+        )
+
+        plt.colorbar(label="Mean CoT")
+
+        plt.title('Mean CoT vs Frequency')
         plt.xlabel('Frequency (Hz)')
         plt.ylabel('Gait')
+
         if x_labels is not None:
-            plt.xticks(ticks=range(len(x_labels)), labels=x_labels)
+            plt.xticks(
+                ticks=range(len(x_labels)),
+                labels=x_labels,
+                rotation=45
+            )
+
         if y_labels is not None:
-            plt.yticks(ticks=range(len(y_labels)), labels=y_labels)
+            plt.yticks(
+                ticks=range(len(y_labels)),
+                labels=y_labels
+            )
+
+        # Draw mean values in cells
+        for i in range(self.data.shape[0]):
+            for j in range(self.data.shape[1]):
+
+                value = self.data[i, j]
+
+                plt.text(
+                    j,
+                    i,
+                    f"{value:.2f}",
+                    ha='center',
+                    va='center',
+                    color='black'
+                )
+
+        plt.tight_layout(pad=2.0)
         plt.show()
 
 
-def test_main():
-    freq_labels = ['1.0 Hz', '1.5 Hz', '2.0 Hz']
+def build_heatmap_from_gaits(gait_data_list):
 
-    gait_data = [
-        GaitFreqData('Walk',   freq_labels, [0.30, 0.20, 0.10]),
-        GaitFreqData('Trot',   freq_labels, [0.15, 0.30, 0.15]),
-        GaitFreqData('Gallop', freq_labels, [0.05, 0.10, 0.40]),
-    ]
+    # Collect ALL unique frequencies
+    all_freqs = sorted(set(
+        freq
+        for gait in gait_data_list
+        for freq in gait.frequency_labels
+    ))
 
-    heat_map = build_heatmap_from_gaits(gait_data)
-    heat_map.plot()
+    matrix = []
+
+    for gait in gait_data_list:
+
+        # Map frequency -> value
+        value_map = dict(zip(gait.frequency_labels, gait.values))
+
+        row = []
+
+        for freq in all_freqs:
+
+            # Missing frequencies become max penalty
+            row.append(value_map.get(freq, 2.0))
+
+        matrix.append(row)
+
+    matrix = np.array(matrix)
+
+    gait_names = [g.gait_name for g in gait_data_list]
+
+    hm = HeatMap(matrix)
+
+    hm._default_x_labels = all_freqs
+    hm._default_y_labels = gait_names
+
+    return hm
+
+
+def parse_frequency_file(filepath, gait_name):
+
+    frequency_data = {}
+
+    current_freq = None
+
+    with open(filepath, "r") as f:
+        lines = f.readlines()
+
+    for line in lines:
+
+        # Match:
+        # Incrementing frequency to 1.40 Hz
+        freq_match = re.search(
+            r'Incrementing frequency to ([\d.]+)\s*Hz',
+            line
+        )
+
+        if freq_match:
+
+            current_freq = float(freq_match.group(1))
+
+            if current_freq not in frequency_data:
+                frequency_data[current_freq] = []
+
+            continue
+
+        # Match:
+        # 41  CoT:  0.48066626397280193
+        cot_match = re.search(r'CoT:\s*([^\s]+)', line)
+
+        if cot_match and current_freq is not None:
+
+            cot_str = cot_match.group(1)
+
+            # Treat None as maximum penalty
+            if cot_str == "None":
+                cot = 2.0
+            else:
+                cot = float(cot_str)
+
+                # Clip ALL values into range [0, 2]
+                cot = np.clip(cot, 0, 2)
+
+            frequency_data[current_freq].append(cot)
+
+    frequencies = sorted(frequency_data.keys())
+
+    mean_values = []
+
+    for freq in frequencies:
+
+        values = frequency_data[freq]
+
+        if len(values) == 0:
+            mean_values.append(2.0)
+        else:
+            mean_values.append(np.mean(values))
+
+    freq_labels = [f"{f:.1f} Hz" for f in frequencies]
+
+    return GaitFreqData(
+        gait_name=gait_name,
+        frequency_labels=freq_labels,
+        values=mean_values
+    )
+
+
+def main():
+
+    walk_data = parse_frequency_file(
+        "data/frequency_analysis_walk.txt",
+        "Walk"
+    )
+
+    amble_data = parse_frequency_file(
+        "data/frequency_analysis_amble.txt",
+        "Amble"
+    )
+
+    trot_data = parse_frequency_file(
+        "data/frequency_analysis_trot.txt",
+        "Trot"
+    )
+
+    heatmap = build_heatmap_from_gaits([
+        walk_data,
+        amble_data,
+        trot_data
+    ])
+
+    heatmap.plot()
+
 
 if __name__ == "__main__":
-    test_main()
+    main()

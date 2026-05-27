@@ -88,7 +88,7 @@ class GaitScheduler:
             phi = (phases[i] % (2*np.pi)) / (2*np.pi)
 
             phase_norm[foot] = phi
-            contact[foot] = 1 if phi < duty else 0
+            contact[foot] = 0 if phi < duty else 1
 
         return phase_norm, contact
 
@@ -217,108 +217,6 @@ class TrajectoryBuilder:
             z = stance.z + pos.z
         )
         return foot_positions_hip
-
-    def new_build_ellipsoid_trajectory(
-        self,
-        phase_norm: dict[Foot, float],
-        contact: dict[Foot, int],   # still passed (useful later for force)
-        neuron_phase_velocities: np.ndarray
-    ) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
-
-        assert self.ellipsoid_config is not None
-
-        FRONT_FEET = {Foot.FL, Foot.FR}
-        cfg = self.robot_interface.active_traj_params
-        duty = self.robot_interface.duty_factor
-
-        foot_positions = {}
-        foot_velocities = {}
-
-        # Smoothness of stance↔swing transition
-        k = 20.0  # increase = sharper transition
-
-        for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
-
-            phi = phase_norm[foot]                 # ∈ [0,1]
-            theta_dot = neuron_phase_velocities[neuron_idx]
-            dphi_dt = theta_dot / (2 * np.pi)
-
-            is_front = foot in FRONT_FEET
-
-            x_fore   = cfg.front_x_fore   if is_front else cfg.rear_x_fore
-            x_hind   = cfg.front_x_hind   if is_front else cfg.rear_x_hind
-            z_top    = cfg.front_z_top    if is_front else cfg.rear_z_top
-            z_bottom = cfg.front_z_bottom if is_front else cfg.rear_z_bottom
-            rotation = cfg.front_rotation if is_front else cfg.rear_rotation
-            skew     = cfg.front_skew     if is_front else cfg.rear_skew
-
-            # ─────────────────────────────────────────────
-            # Smooth stance/swing blending weight
-            # ─────────────────────────────────────────────
-            w_stance = 0.5 * (1.0 - np.tanh(k * (phi - duty)))
-            w_swing  = 1.0 - w_stance
-
-            # ─────────────────────────────────────────────
-            # STANCE trajectory
-            # ─────────────────────────────────────────────
-            phi_stance = np.clip(phi / duty, 0.0, 1.0)
-
-            x_stance = x_fore - (x_fore + x_hind) * phi_stance
-            z_stance = -z_bottom
-
-            dx_stance_dphi = -(x_fore + x_hind) / duty
-            dz_stance_dphi = 0.0
-
-            # ─────────────────────────────────────────────
-            # SWING trajectory
-            # ─────────────────────────────────────────────
-            phi_swing = np.clip((phi - duty) / (1.0 - duty), 0.0, 1.0)
-
-            x_swing = -x_hind + (x_fore + x_hind) * phi_swing
-            z_swing = z_top * np.sin(np.pi * phi_swing)
-
-            dx_swing_dphi = (x_fore + x_hind) / (1.0 - duty)
-            dz_swing_dphi = (
-                z_top * np.pi * np.cos(np.pi * phi_swing) / (1.0 - duty)
-            )
-
-            # ─────────────────────────────────────────────
-            # Blend positions
-            # ─────────────────────────────────────────────
-            x = w_stance * x_stance + w_swing * x_swing
-            z = w_stance * z_stance + w_swing * z_swing
-
-            # ─────────────────────────────────────────────
-            # Blend velocities (ignore weight derivatives → stable enough)
-            # ─────────────────────────────────────────────
-            dx_dphi = w_stance * dx_stance_dphi + w_swing * dx_swing_dphi
-            dz_dphi = w_stance * dz_stance_dphi + w_swing * dz_swing_dphi
-
-            dx = dx_dphi * dphi_dt
-            dz = dz_dphi * dphi_dt
-
-            # ─────────────────────────────────────────────
-            # Rotation
-            # ─────────────────────────────────────────────
-            ca, sa = np.cos(rotation), np.sin(rotation)
-
-            x_r = x * ca - z * sa
-            z_r = x * sa + z * ca
-
-            dx_r = dx * ca - dz * sa
-            dz_r = dx * sa + dz * ca
-
-            # ─────────────────────────────────────────────
-            # Skew
-            # ─────────────────────────────────────────────
-            x_s = x_r + skew
-            z_s = z_r
-
-            foot_positions[foot] = Coordinate(x_s, 0.0, z_s)
-            foot_velocities[foot] = Coordinate(dx_r, 0.0, dz_r)
-
-        foot_positions = self.transform_relative_world_to_hip(foot_positions)
-        return foot_positions, foot_velocities
 
     def build_ellipsoid_trajectory(self, neuron_output, neuron_phase_velocities) -> tuple[dict[Foot, Coordinate], dict[Foot, Coordinate]]:
         """

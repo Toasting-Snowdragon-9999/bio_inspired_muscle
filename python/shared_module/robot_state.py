@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
+from collections import deque
 
 # Define gait phases for each foot in the order: FL, FR, RL, RR
 class Gait:
@@ -134,6 +135,17 @@ class RobotState:
     previous_state: State
     next_state: State
 
+@dataclass
+class RobotData:
+    knee_torque: dict[Foot, float]
+    cot: float
+    cpg_phases: dict[Foot, float]
+    robot_velocity: float
+
+    roll: float
+    pitch: float
+
+    time: float
 
 class RobotInterface:
     """
@@ -164,7 +176,11 @@ class RobotInterface:
         self._cpg_transition_speed = 0.5
         self._body_velocity = 0.0
         self._target_speed = 0.15
+        self._new_gait_cycle = False
         self._expected_footfall: dict[Foot, int] = {}  # Updated by CPG output for use in PD control and logging
+        self.data_list: deque[RobotData] = None
+        self.cpg_phase: dict[Foot, float] = None # Current CPG phase for each foot, updated every step for logging and state estimation
+
         # Actual per-foot ground contact (1 = stance, 0 = swing). Synced every
         # mj_step from MuJoCo contact pairs in MujocoSim._sync_robot_interface.
         # Mirror partner of `_expected_footfall`: comparing the two yields the
@@ -184,6 +200,14 @@ class RobotInterface:
     @active_gait.setter
     def active_gait(self, gait: Gait):
         self._active_gait = gait
+
+    @property
+    def new_gait_cycle(self) -> bool:
+        return self._new_gait_cycle
+    
+    @new_gait_cycle.setter
+    def new_gait_cycle(self, value: bool):
+        self._new_gait_cycle = bool(value)
 
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
@@ -262,6 +286,8 @@ class RobotInterface:
     @dt.setter
     def dt(self, value):
         self._dt = value
+        if self.data_list is None:
+            self.data_list = deque(maxlen=int(10 / value))
 
     @property
     def current_state(self) -> State:
