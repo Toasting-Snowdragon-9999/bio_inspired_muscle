@@ -90,7 +90,7 @@ def elip_traj_test():
 
     controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, ellipsoid_config=cfg)
     recorder = TrajectoryRecorder(robot_interface)
-    controller.enable_turn = False
+    controller.enable_turn = True
 
     # Wrap controller.run
     original_run = controller.run
@@ -101,16 +101,16 @@ def elip_traj_test():
 
     controller.run = wrapped_run
 
-    sim.sim(controller=controller, sim_length=10, slow_factor=1.0)
+    sim.sim(controller=controller, sim_length=-1, slow_factor=1.0)
     
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
 
-    recorder.trim(1000)
+    recorder.trim(1000) # remove swirly stuff in the beginning
 
-    recorder.plot()
-    recorder.plot_overlay()
-    recorder.plot_3d()
+    # recorder.plot()
+    # recorder.plot_overlay()
+    # recorder.plot_3d()
     print(recorder.compute_error())
 
 def oval_traj_test():

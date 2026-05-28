@@ -35,6 +35,8 @@ class Gait(Enum):
 class Mode(Enum):
     MOVING = 1
     TRANSITION = 2
+    STILL = 3
+    TURNING = 4
 
     def __str__(self):
         return self.name
@@ -136,6 +138,8 @@ class RobotInterface:
         self._duty_factor: float = duty_factor  # fraction of the cycle spent in stance (0–1)
         self._initialized = True
         self._dt = None
+        self._turn_left = False
+        self._turn_right = False
 
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
@@ -270,6 +274,22 @@ class RobotInterface:
     @target_torques.setter
     def target_torques(self, target_torques: dict[Joint, float]):
         self._target_torques.update(target_torques)
+
+    @property
+    def turn_left(self):
+        return self._turn_left
+    
+    @turn_left.setter
+    def turn_left(self, value: bool):
+        self._turn_left = bool(value)
+
+    @property
+    def turn_right(self):
+        return self._turn_right
+    
+    @turn_right.setter
+    def turn_right(self, value: bool):
+        self._turn_right = bool(value)
 
     def update_mode(self, new_mode: Mode):
         if self.robot_state:

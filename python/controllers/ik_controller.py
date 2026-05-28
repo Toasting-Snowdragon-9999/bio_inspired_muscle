@@ -79,51 +79,93 @@ class IKController:
 
         # ===== IK END =====
 
+    # def apply_turning(self, foot_targets, foot_velocities, phase_outputs):
+    #     """
+    #     Apply turning ONLY during stance phase (fixes weird rear leg motion)
+    #     """
+
+    #     ramp = min(1.0, self.time / 2.0)
+    #     turn = self.turn_rate * ramp
+
+    #     rear_gain  = 0.10
+    #     front_gain = 0.05
+
+    #     for idx, foot in enumerate(Foot):
+    #         pos = foot_targets[foot]
+    #         vel = foot_velocities[foot]
+
+    #         # Get phase
+    #         phase = phase_outputs[idx] % (2 * np.pi)
+    #         duty = self.robot_interface.duty_factor
+
+    #         # Normalize phase [0,1]
+    #         phi = phase / (2 * np.pi)
+
+    #         # 👉 Only apply during stance
+    #         if phi < duty:
+
+    #             if foot in [Foot.FL, Foot.RL]:
+    #                 side = -1.0
+    #             else:
+    #                 side = +1.0
+
+    #             if foot in [Foot.RL, Foot.RR]:
+    #                 gain = rear_gain
+    #             else:
+    #                 gain = front_gain
+
+    #             if foot in [Foot.RL, Foot.RR]:
+    #                 dx = -side * turn * gain   # 👈 flip sign for rear
+    #             else:
+    #                 dx = side * turn * gain
+
+    #             pos.x += dx
+    #             vel.x += dx
+
+    #             # safety clamp
+    #             pos.x = np.clip(pos.x, -0.22, 0.22)
+
+    #     return foot_targets, foot_velocities
+
     def apply_turning(self, foot_targets, foot_velocities, phase_outputs):
         """
-        Apply turning ONLY during stance phase (fixes weird rear leg motion)
+        Turning via stride scaling:
+        inner legs → shorter steps
+        outer legs → longer steps
         """
+        left  = self.robot_interface.turn_left
+        right = self.robot_interface.turn_right
 
-        ramp = min(1.0, self.time / 2.0)
-        turn = self.turn_rate * ramp
+        if left or right:
+            # direction of turn
+            direction = left - right
 
-        rear_gain  = 0.10
-        front_gain = 0.05
+            turn = direction * self.turn_rate
 
-        for idx, foot in enumerate(Foot):
-            pos = foot_targets[foot]
-            vel = foot_velocities[foot]
+            gain = 0.5 # this controls how strong the turning is
 
-            # Get phase
-            phase = phase_outputs[idx] % (2 * np.pi)
-            duty = self.robot_interface.duty_factor
+            for idx, foot in enumerate(Foot):
+                pos = foot_targets[foot]
+                vel = foot_velocities[foot]
 
-            # Normalize phase [0,1]
-            phi = phase / (2 * np.pi)
+                # only affect stance phase
+                phase = phase_outputs[idx] % (2 * np.pi)
+                duty = self.robot_interface.duty_factor
+                phi = phase / (2 * np.pi)
 
-            # 👉 Only apply during stance
-            if phi < duty:
+                if phi < duty:
+                    # left / right
+                    if foot in [Foot.FL, Foot.RL]:
+                        side = -1.0   # left legs
+                    else:
+                        side = +1.0   # right legs
 
-                if foot in [Foot.FL, Foot.RL]:
-                    side = -1.0
-                else:
-                    side = +1.0
+                    scale = 1.0 + side * turn * gain # e.g. 1 + (-1 * -0.5 * 0.3) = 0.85
+                    # scale = np.clip(scale, -1.0, 1.0)
 
-                if foot in [Foot.RL, Foot.RR]:
-                    gain = rear_gain
-                else:
-                    gain = front_gain
-
-                if foot in [Foot.RL, Foot.RR]:
-                    dx = -side * turn * gain   # 👈 flip sign for rear
-                else:
-                    dx = side * turn * gain
-
-                pos.x += dx
-                vel.x += dx
-
-                # safety clamp
-                pos.x = np.clip(pos.x, -0.22, 0.22)
+                    pos.x *= scale
+                    vel.x *= scale
+                    pos.x = np.clip(pos.x, -0.22, 0.22)
 
         return foot_targets, foot_velocities
 
@@ -133,17 +175,6 @@ class IKController:
         Called once per simulation timestep via mjcb_control.
         """
         # ===== CPG & trajectory =====
-        if self.enable_turn:
-            dt = self.robot_interface.dt if hasattr(self.robot_interface, "dt") else 0.002
-            self.time += dt
-
-            if self.time < 3.0:
-                self.turn_rate = 0.0   # straight
-            else:
-                self.turn_rate = 0.5   # start turning left
-        else:
-            self.turn_rate = 0.0
-
         self.cpg.run()
         phase_outputs = self.cpg.get_phase_outputs()
         phase_velocities = self.cpg.get_phase_velocities()
@@ -152,6 +183,7 @@ class IKController:
 
         # Turning
         if self.enable_turn:
+            self.turn_rate = 0.5
             foot_targets, foot_velocities = self.apply_turning(
                 foot_targets, foot_velocities, phase_outputs
             )

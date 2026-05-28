@@ -331,6 +331,30 @@ class MujocoSim:
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
+
+        if act == glfw.PRESS and key == glfw.KEY_W:
+            # increase vel
+            pass
+        
+        if act == glfw.PRESS and key == glfw.KEY_S:
+            # decrease vel
+            pass
+        
+        if act == glfw.PRESS and key == glfw.KEY_A:
+            # turn left
+            self.robot_interface.turn_left = True
+
+        if act == glfw.RELEASE and key == glfw.KEY_A:
+            # turn left
+            self.robot_interface.turn_left = False
+        
+        if act == glfw.PRESS and key == glfw.KEY_D:
+            # turn right
+            self.robot_interface.turn_right = True
+            
+        if act == glfw.RELEASE and key == glfw.KEY_D:
+            # turn right
+            self.robot_interface.turn_right = False
         
         # Pass keyboard event to controller if registered
         if self.controller_keyboard_callback is not None:
