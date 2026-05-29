@@ -241,7 +241,7 @@ def plot_pd_vs_oiac(pd_file, oiac_file, smooth_window=10):
         ax.grid(True)
         ax.legend()
 
-        ax.set_xlim(3, 10)
+        ax.set_xlim(5, 12)
 
     axs[-1].set_xlabel("Time [s]")
 

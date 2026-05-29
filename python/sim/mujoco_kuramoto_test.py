@@ -18,6 +18,16 @@ from shared_module.settings_loader import load_settings_from_file
 # TROT: freq = 2.2 Hz 
 # BOUND: freq = 5.0 Hz
 
+base_size = 20
+plt.rcParams.update({
+    'font.size': base_size,        # Default text size
+    'axes.titlesize': base_size + 5,   # Title size
+    'axes.labelsize': base_size + 4,   # X and Y label size
+    'xtick.labelsize': base_size + 2,  # X tick size
+    'ytick.labelsize': base_size + 2,  # Y tick size
+    'legend.fontsize': base_size + 2   # Legend size
+})
+
 os.environ["G_MESSAGES_DEBUG"] = "none"
 
 class Terrain(Enum):
@@ -140,7 +150,8 @@ def compute_duty_cycles(footfall_comparison, dt):
         if total_samples == 0:
             duty_cycles[foot] = 0.0
             continue
-
+        print(f"\n{foot.name}")
+        print(f"Total samples: {total_samples}")
         stance_time = stance_samples * dt
         total_time = total_samples * dt
         duty_cycle = stance_time / total_time
@@ -152,7 +163,7 @@ def plot_footfall(footfall_comparison, dt):
     if footfall_comparison is not None:
         time = np.arange(len(footfall_comparison)) * dt
 
-        fig, axs = plt.subplots(4, 1, figsize=(12, 8), sharex=True)
+        fig, axs = plt.subplots(4, 1, figsize=(12, 4), sharex=True)
 
         for idx, foot in enumerate(Foot):
 
@@ -166,22 +177,25 @@ def plot_footfall(footfall_comparison, dt):
                 for sample in footfall_comparison
             ]
 
-            axs[idx].plot(
+            axs[idx].step(
                 time,
                 actual,
                 label=f"{foot.name} Actual",
-                linewidth=2
+                linewidth=2,
+                where='post'
             )
 
-            axs[idx].plot(
+            axs[idx].step(
                 time,
                 expected,
                 '--',
                 label=f"{foot.name} Expected",
-                linewidth=2
+                linewidth=2,
+                where='post'
             )
 
             axs[idx].set_ylim(-0.1, 1.1)
+            axs[idx].set_yticks([0, 1])
             axs[idx].set_ylabel(foot.name)
             axs[idx].grid(True)
             axs[idx].legend(loc="upper right")
@@ -229,12 +243,62 @@ def save_robot_data(robot_data_list, filename="robot_data.json"):
 
     print(f"Saved {len(serializable_data)} entries to '{filename}'")
 
+def graph_roll_pitch(robot_data_list, tmin=None, tmax=None):
+    """
+    Graph the roll and pitch of the robot over time.
+
+    Parameters
+    ----------
+    robot_data_list : list[RobotData]
+        List of RobotData dataclass instances.
+
+    tmin : float, optional
+        Start of the time window [s]. Entries before this are dropped.
+        ``None`` means start from the first entry.
+
+    tmax : float, optional
+        End of the time window [s]. Entries after this are dropped.
+        ``None`` means run to the last entry.
+    """
+
+    windowed = [
+        entry for entry in robot_data_list
+        if (tmin is None or entry.time >= tmin)
+        and (tmax is None or entry.time <= tmax)
+    ]
+
+    if not windowed:
+        print(f"No robot data in window tmin={tmin}, tmax={tmax}")
+        return
+
+    time = [entry.time for entry in windowed]
+    roll = [entry.roll for entry in windowed]
+    pitch = [entry.pitch for entry in windowed]
+
+    fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+
+    axs[0].plot(time, roll, label="Roll", color="tab:blue", linewidth=2)
+    axs[0].set_ylabel("Roll [deg]")
+    axs[0].grid(True)
+    axs[0].legend(loc="upper right")
+
+    axs[1].plot(time, pitch, label="Pitch", color="tab:orange", linewidth=2)
+    axs[1].set_ylabel("Pitch [deg]")
+    axs[1].grid(True)
+    axs[1].legend(loc="upper right")
+
+    axs[-1].set_xlabel("Time [s]")
+
+    plt.suptitle("Robot Roll and Pitch")
+    plt.tight_layout()
+    plt.show()
+
 def elip_traj_test():
     try: 
         gait = Gait.TROT
 
         terrain = Terrain.flat
-        cfg, freq, duty_factor = load_settings_from_file(gait)
+        cfg, freq, duty_factor, params = load_settings_from_file(gait)
         robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=gait, frequency=freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=duty_factor)
         # robot_interface.enable_cpg = False
         
@@ -243,30 +307,13 @@ def elip_traj_test():
         z_pos = set_spawn(sim, terrain)
         # sim.enable_air_mode(z_pos)
         # # Hard
-        params = (
-            0.2,  # a: learning rate of impedance adaptation
-            5.0,  # b: sensitivity of impedance adaptation to velocity error
-            0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
-        )
-        # Soft
-        # params = (
-        #     0.1,  # a: learning rate of impedance adaptation
-        #     1.5,  # b: sensitivity of impedance adaptation to velocity error
-        #     0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
-        # )
-        # Best 
-        # params = (
-        #     0.1,  # a: learning rate of impedance adaptation
-        #     20.0,  # b: sensitivity of impedance adaptation to velocity error
-        #     0.07  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
-        # )
-        # Params for walk
         # params = (
         #     0.2,  # a: learning rate of impedance adaptation
-        #     7.0,  # b: sensitivity of impedance adaptation to velocity error
-        #     0.03  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
+        #     5.0,  # b: sensitivity of impedance adaptation to velocity error
+        #     0.05  # k: baseline stiffness (added to adapted stiffness to prevent singularity when error is near zero)
         # )
-        controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=True, ellipsoid_config=cfg)
+
+        controller = IKController(robot_interface=robot_interface, stride_length=None, step_height=None, params=params, use_adaptive_pd=False, ellipsoid_config=cfg)
         
     except Exception as e:
         print(f"Error during setup: {e}")
@@ -274,7 +321,7 @@ def elip_traj_test():
         return
 
     try:
-        sim.sim(controller=controller, sim_length=11, slow_factor=1.0)
+        sim.sim(controller=controller, sim_length=13, slow_factor=1.0)
     except Exception as e:
         print(f"Error during simulation: {e}")
         traceback.print_exc()
@@ -283,9 +330,10 @@ def elip_traj_test():
     print("Cost of Transport:", cot)
     oiac_filename = "data/oiac_data.json"
     pd_filename = "data/pd_data.json"
-    save_robot_data(sim.robot_interface.data_list, filename=oiac_filename)
+    save_robot_data(sim.robot_interface.data_list, filename=pd_filename)
+    graph_roll_pitch(sim.robot_interface.data_list, tmin=6.0, tmax=12.0)
 
-    footfall_comparison = sim.foot_fall_comparison
+    # footfall_comparison = sim.foot_fall_comparison
     # if footfall_comparison is not None:
     #     compute_duty_cycles(footfall_comparison, sim.robot_interface.dt)
     #     plot_footfall(footfall_comparison, sim.robot_interface.dt)

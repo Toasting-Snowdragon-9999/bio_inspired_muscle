@@ -1,6 +1,7 @@
 from pyexpat import model
 import os, sys
 import time
+import threading
 import traceback
 from math import floor
 from collections import deque
@@ -18,6 +19,57 @@ from shared_module.global_constants import (
     SENSOR_VEL_DICT, ACTUATOR_DICT, NEURON_TO_FOOT_DICT
 )
 from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh, RobotData
+
+
+def _silence_glib_stderr():
+    """Filter out harmless GLib-CRITICAL spam from stderr.
+
+    GLib/GTK emit warnings such as
+    ``g_main_context_pop_thread_default: assertion 'stack != NULL' failed``
+    directly to file descriptor 2 from C, so they bypass ``sys.stderr`` and
+    aren't affected by ``G_MESSAGES_DEBUG`` (which only gates DEBUG/INFO, not
+    CRITICAL). We splice a pipe onto fd 2 and forward every line to the real
+    stderr in a background thread, dropping only the known GLib noise. Set
+    ``KEEP_GLIB_STDERR=1`` to disable this and see the raw output.
+    """
+    if os.environ.get("KEEP_GLIB_STDERR"):
+        return
+
+    try:
+        real_stderr_fd = os.dup(2)
+        read_fd, write_fd = os.pipe()
+        os.dup2(write_fd, 2)
+        os.close(write_fd)
+    except OSError:
+        return  # Platform without dup2/pipe support — leave stderr untouched.
+
+    drop_markers = (
+        "GLib-CRITICAL",
+        "GLib-GObject",
+        "g_main_context_pop_thread_default",
+    )
+
+    def _pump():
+        last_dropped = False
+        with os.fdopen(read_fd, "rb") as pipe:
+            for line in pipe:
+                text = line.decode("utf-8", "replace")
+                if any(marker in text for marker in drop_markers):
+                    last_dropped = True
+                    continue
+                # GLib prints a blank line after each warning; swallow the one
+                # immediately following a dropped line so we don't leak gaps.
+                if last_dropped and text.strip() == "":
+                    last_dropped = False
+                    continue
+                last_dropped = False
+                os.write(real_stderr_fd, line)
+
+    threading.Thread(target=_pump, daemon=True).start()
+
+
+_silence_glib_stderr()
+
 
 class MujocoSim:
     def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 60.0):
@@ -468,10 +520,10 @@ class MujocoSim:
             # --- Exit condition ---
             if self.sim_length > 0 and self.data.time >= self.next_cot_print_time:
                 break
-                if iteration % 10 == 0:
-                    # every 10 iteration increment freq
-                    self.robot_interface.frequency += 0.1
-                    print(f"Incrementing frequency to {self.robot_interface.frequency:.2f} Hz")
+                # if iteration % 11 == 0:
+                #     # every 10 iteration increment freq
+                #     self.robot_interface.frequency += 0.1
+                #     print(f"Incrementing frequency to {self.robot_interface.frequency:.2f} Hz")
                 if self.print_cot is False:
                     print(iteration, " CoT: ", self.compute_CoT())
                     self.reset_cot()
@@ -892,7 +944,7 @@ class MujocoSim:
 
         if distance <= 0:
             # Robot did not move forward — CoT undefined (likely fell over)
-            print("Warning: Robot did not move forward during measurement phase. CoT is undefined.")
+            # print("Warning: Robot did not move forward during measurement phase. CoT is undefined.")
             return None
 
         g = 9.81

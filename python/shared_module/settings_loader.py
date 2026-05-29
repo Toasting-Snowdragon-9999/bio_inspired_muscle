@@ -25,7 +25,10 @@ SETTINGS_PATH = os.path.join(
 
 
 def load_settings_from_file(gait: Gait):
-
+    """
+    arg: gait: Gait enum value (e.g., Gait.TROT)
+    returns: EllipsoidConfig, frequency, duty_factor
+    """
     parser = ConfigParser()
 
     gait_path = os.path.join(
@@ -64,4 +67,12 @@ def load_settings_from_file(gait: Gait):
         rear_skew=parser.getfloat(section, "rear_skew"),
     )
 
-    return config, frequency, duty_factor
+    section_oiac = "oiac"
+    params = None
+    if parser.has_section(section_oiac):
+        a = parser.getfloat(section_oiac, "a")
+        b = parser.getfloat(section_oiac, "b")
+        k = parser.getfloat(section_oiac, "k")
+        params = (a, b, k)
+
+    return config, frequency, duty_factor, params
