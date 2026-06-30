@@ -1,3 +1,8 @@
+"""@brief Standalone demo: interactively pose individual Go2 joints from the keyboard.
+
+Entry-point script providing an ``InteractiveController`` that lets the user select a
+leg/joint and nudge its target angle with the keyboard, driven by a PD law in air mode.
+"""
 import os
 import sys
 os.environ.setdefault('MUJOCO_GL', 'glfw')
@@ -13,6 +18,12 @@ from shared_module.global_constants import (
 
 
 class InteractiveController:
+    """@brief Keyboard-driven controller for manually posing one joint at a time.
+
+    Keys select the active leg (1-4) and joint (Q/W/E), arrow keys nudge the
+    selected joint's target angle within its range, and a PD law tracks the
+    targets each control tick.
+    """
 
     # Maps (leg, joint) string pair -> Joint enum
     JOINT_MAP = {
@@ -31,6 +42,10 @@ class InteractiveController:
     }
 
     def __init__(self, robot_interface: RobotInterface):
+        """@brief Initialise the controller with default selection, standing targets, and PD gains.
+
+        @param robot_interface: Shared RobotInterface read for state and written with target positions.
+        """
         self.robot_interface = robot_interface
         self.prev_fl = 0.0, 0.0, 0.0
 
@@ -53,10 +68,22 @@ class InteractiveController:
         self.kd = 1.0
 
     def _current_joint_enum(self) -> Joint:
+        """@brief Resolve the currently selected (leg, joint) pair to its Joint enum.
+
+        @return The Joint enum value for the active leg/joint selection.
+        """
         return self.JOINT_MAP[(self.current_leg, self.current_joint)]
 
     def keyboard_callback(self, window, key, scancode, action, mods):
-        """Handle keyboard input for interactive control."""
+        """Handle keyboard input for interactive control.
+
+        @brief Update the selected leg/joint and nudge its target angle from key presses.
+        @param window: GLFW window receiving the event.
+        @param key: GLFW key code of the pressed/repeated key.
+        @param scancode: Platform-specific scancode of the key.
+        @param action: GLFW action (PRESS/REPEAT/RELEASE); only PRESS/REPEAT act.
+        @param mods: Bitfield of active modifier keys.
+        """
         if action == glfw.PRESS or action == glfw.REPEAT:
 
             if key == glfw.KEY_1:
@@ -94,7 +121,10 @@ class InteractiveController:
                 self.target_positions[joint] = 0.0
 
     def run(self):
-        """PD controller: reads state from robot_interface, writes torques back."""
+        """PD controller: reads state from robot_interface, writes torques back.
+
+        @brief Compute per-joint PD commands toward the manual targets and publish them.
+        """
         joint_positions = self.robot_interface.joint_positions
         joint_velocities = self.robot_interface.joint_velocities
 
@@ -121,6 +151,7 @@ class InteractiveController:
                 self.prev_fl = tuple(fl)
 
 def main():
+    """@brief Entry point: load the flat scene in air mode and run the interactive PD demo."""
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     robot_interface = RobotInterface(State(mode=Mode.MOVING, gait=Gait.WALK))
     controller = InteractiveController(robot_interface)

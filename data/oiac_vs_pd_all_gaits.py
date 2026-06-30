@@ -1,3 +1,4 @@
+"""@brief oiac_vs_pd_all_gaits.py — oiac vs pd all gaits."""
 import numpy as np
 import matplotlib.pyplot as plt
 

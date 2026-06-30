@@ -60,3 +60,15 @@ python/inverse_kinematics/__pycache__/*
 python/shared_module/__pycache__/*
 
 !python/sim/go2/assets/*
+
+# Python bytecode / caches (catch-all so nothing slips through)
+__pycache__/
+*.pyc
+
+# Alternate virtual-env name and vendored Unitree Go2 SDK
+python/.venv/
+python/go2_sdk/
+
+# Local uncompressed video master (kept out of the repo) and generated API docs
+Docs/*_master.mp4
+Docs/doxygen/

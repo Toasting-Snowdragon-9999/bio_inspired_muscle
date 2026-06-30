@@ -1,9 +1,19 @@
-import os 
+"""@brief Standalone demo: PD-control a Go2 quadruped to a fixed standing pose on terrain.
+
+Entry-point script that wires a simple position-PD controller (``test_controller``)
+into ``MujocoSim`` and runs a rendered simulation.
+"""
+import os
 from mujoco_sim import MujocoSim
 
 
 
 class test_controller:
+    """@brief Self-contained PD controller that holds the robot in a standing configuration.
+
+    Owns its own actuator/sensor index maps and joint ranges, and drives each
+    actuator with a proportional-derivative law toward fixed target joint angles.
+    """
     # KNEE_CONTROL_RANGE = {-45.43, 45.43}
     # DEFAULT_CONTROL_RANGE = {-23.7, 23.7}
 
@@ -67,9 +77,10 @@ class test_controller:
     }
 
     def __init__(self):
+        """@brief Initialise model/data handles, standing target pose, and PD gains."""
         self.model = None
         self.data = None
-        
+
         # Target joint positions for standing configuration
         self.target_positions = {
             # Hip joints (abduction)
@@ -96,10 +107,20 @@ class test_controller:
         self.kd = 2.0   # Derivative gain
 
     def init_controller(self, model, data):
+        """@brief Store the MuJoCo model and data handles for later use.
+
+        @param model: MuJoCo MjModel for the loaded scene.
+        @param data: MuJoCo MjData state container associated with the model.
+        """
         self.model = model
         self.data = data
 
     def run(self, model, data):
+        """@brief Apply one PD-control step driving every joint toward its standing target.
+
+        @param model: MuJoCo MjModel (unused directly; index maps are class attributes).
+        @param data: MuJoCo MjData providing sensor readings and the ctrl array to write.
+        """
         # PD controller to move joints to target standing position
         for joint_name, actuator_idx in self.ACTUATOR_DICT.items():
             # Get current position and velocity
@@ -122,6 +143,7 @@ class test_controller:
             data.ctrl[actuator_idx] = control_signal
 
 def main():
+    """@brief Load the terrain scene, build the PD controller, and run the rendered sim."""
     xml_path = os.path.join(os.path.dirname(__file__), 'go2', 'scene_terrain.xml')
     sim = MujocoSim(xml_path)
     controller = test_controller()

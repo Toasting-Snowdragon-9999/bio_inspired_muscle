@@ -1,3 +1,4 @@
+"""@brief robot_state.py — robot state."""
 from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
@@ -5,32 +6,64 @@ from collections import deque
 
 # Define gait phases for each foot in the order: FL, FR, RL, RR
 class Gait:
+    """@brief Gait — gait."""
     _registry = {}
 
     def __init__(self, name, phases):
+        """
+        @brief Construct a Gait instance.
+        @param name:
+        @param phases:
+        """
         self.name = name
         self._value_ = phases
         Gait._registry[name] = self
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
     @property
     def value(self):
+        """
+        @brief Accessor for the value.
+        @return
+        """
         return self._value_
 
     def __eq__(self, other):
+        """
+        @brief Equality comparison.
+        @param other:
+        @return
+        """
         if isinstance(other, Gait):
             return self._value_ == other._value_
         return False
 
     def __hash__(self):
+        """
+        @brief Return the hash value.
+        @return
+        """
         return hash(self.name)
 
     def __repr__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return f"Gait.{self.name}"
 
     def __class_getitem__(cls, name):
+        """
+        @brief Support subscripting the class.
+        @param name:
+        @return
+        """
         return cls._registry[name]
 
 # FL - FR - RR - RL
@@ -49,11 +82,16 @@ ALL_GAITS = [Gait.WALK, Gait.TROT, Gait.AMBLE, Gait.CANTER, Gait.GALLOP]
 # }
 
 class Mode(Enum):
+    """@brief Mode — mode."""
     MOVING = 1
     TRANSITION = 2
     STILL = 3
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
 class TrajectoryMethod(Enum):
@@ -66,14 +104,20 @@ class TrajectoryMethod(Enum):
 
 @dataclass
 class State:
+    """@brief State — state."""
     mode: Mode
     gait: Gait
     frequency: float = 0.0
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return f"State(mode={self.mode}, gait={self.gait}, frequency={self.frequency})"
 
 class GaitFreq(Enum):
+    """@brief GaitFreq — gait freq."""
     WALK = 1.4
     AMBLE = 1.7
     TROT = 1.95
@@ -82,6 +126,7 @@ class GaitFreq(Enum):
 
 class Joint(Enum):
     # Front legs
+    """@brief Joint — joint."""
     FR_HIP = auto()
     FR_THIGH = auto()
     FR_CALF = auto()
@@ -97,33 +142,52 @@ class Joint(Enum):
     RL_CALF = auto()
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
 class Foot(Enum):
+    """@brief Foot — foot."""
     FL = 'FL_foot'
     FR = 'FR_foot'
     RL = 'RL_foot'
     RR = 'RR_foot'
     
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
 class Hip(Enum):
+    """@brief Hip — hip."""
     FL = 'FL_hip'
     FR = 'FR_hip'
     RL = 'RL_hip'
     RR = 'RR_hip' 
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
 class Thigh(Enum):
+    """@brief Thigh — thigh."""
     FL = 'FL_thigh'
     FR = 'FR_thigh'
     RL = 'RL_thigh'
     RR = 'RR_thigh'
 
     def __str__(self):
+        """
+        @brief Return the string representation.
+        @return
+        """
         return self.name
 
 @dataclass
@@ -137,6 +201,7 @@ class RobotState:
 
 @dataclass
 class RobotData:
+    """@brief RobotData — robot data."""
     knee_torque: dict[Foot, float]
     cot: float
     cpg_phases: dict[Foot, float]
@@ -154,6 +219,12 @@ class RobotInterface:
     """
 
     def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG, duty_factor: float = 0.5):
+        """
+        @brief Construct a RobotInterface instance.
+        @param starting_state:
+        @param trajectory_method:
+        @param duty_factor:
+        """
         self.robot_state = RobotState(current_state=starting_state, previous_state=None, next_state=None)
         self._active_gait = starting_state.gait
         self._joint_positions: dict[Joint, float] = {}
@@ -195,60 +266,116 @@ class RobotInterface:
     
     @property
     def active_gait(self) -> Gait:
+        """
+        @brief Accessor for the active gait.
+        @return
+        """
         return self._active_gait
     
     @active_gait.setter
     def active_gait(self, gait: Gait):
+        """
+        @brief Set the active gait.
+        @param gait:
+        """
         self._active_gait = gait
 
     @property
     def new_gait_cycle(self) -> bool:
+        """
+        @brief Accessor for the new gait cycle.
+        @return
+        """
         return self._new_gait_cycle
     
     @new_gait_cycle.setter
     def new_gait_cycle(self, value: bool):
+        """
+        @brief Set the new gait cycle.
+        @param value:
+        """
         self._new_gait_cycle = bool(value)
 
     @property
     def trajectory_method(self) -> 'TrajectoryMethod':
+        """
+        @brief Accessor for the trajectory method.
+        @return
+        """
         return self._trajectory_method
 
     @trajectory_method.setter
     def trajectory_method(self, method: 'TrajectoryMethod'):
+        """
+        @brief Set the trajectory method.
+        @param method:
+        """
         self._trajectory_method = method
 
     @property
     def stability_metric(self) -> float:
+        """
+        @brief Accessor for the stability metric.
+        @return
+        """
         return self._stability_metric
     
     @stability_metric.setter
     def stability_metric(self, value: float):
+        """
+        @brief Set the stability metric.
+        @param value:
+        """
         if not (0.0 <= value <= 1.0):
             raise ValueError("Stability metric must be between 0.0 and 1.0")
         self._stability_metric = value
 
     @property
     def current_traj_params(self):
+        """
+        @brief Accessor for the current traj params.
+        @return
+        """
         return self._current_traj_params
     
     @current_traj_params.setter
     def current_traj_params(self, params):
+        """
+        @brief Set the current traj params.
+        @param params:
+        """
         self._current_traj_params = params
 
     @property
     def next_traj_params(self):
+        """
+        @brief Accessor for the next traj params.
+        @return
+        """
         return self._next_traj_params
     
     @next_traj_params.setter
     def next_traj_params(self, params):
+        """
+        @brief Set the next traj params.
+        @param params:
+        """
         self._next_traj_params = params
 
     @property
     def active_traj_params(self):
+        """
+        @brief Accessor for the active traj params.
+        @return
+        """
         return self._active_traj_params
     
     @active_traj_params.setter
     def active_traj_params(self, params):
+        """
+        @brief Set the active traj params.
+        @param params:
+        """
         self._active_traj_params = params
 
     @property
@@ -259,14 +386,26 @@ class RobotInterface:
 
     @duty_factor.setter
     def duty_factor(self, value: float):
+        """
+        @brief Set the duty factor.
+        @param value:
+        """
         self._duty_factor = float(value)
 
     @property
     def expected_footfall(self):
+        """
+        @brief Accessor for the expected footfall.
+        @return
+        """
         return self._expected_footfall
 
     @expected_footfall.setter
     def expected_footfall(self, value: dict[Foot, int]):
+        """
+        @brief Set the expected footfall.
+        @param value:
+        """
         self._expected_footfall = value
 
     @property
@@ -277,32 +416,60 @@ class RobotInterface:
 
     @contact.setter
     def contact(self, value: dict[Foot, int]):
+        """
+        @brief Set the contact.
+        @param value:
+        """
         self._contact = value
 
     @property
     def dt(self):
+        """
+        @brief Accessor for the dt.
+        @return
+        """
         return self._dt
 
     @dt.setter
     def dt(self, value):
+        """
+        @brief Set the dt.
+        @param value:
+        """
         self._dt = value
         if self.data_list is None:
             self.data_list = deque(maxlen=int(10 / value))
 
     @property
     def current_state(self) -> State:
+        """
+        @brief Accessor for the current state.
+        @return
+        """
         return self.robot_state.current_state if self.robot_state else None
 
     @current_state.setter
     def current_state(self, state: State):
+        """
+        @brief Set the current state.
+        @param state:
+        """
         self.update_state(state)
     
     @property
     def next_state(self) -> State:
+        """
+        @brief Accessor for the next state.
+        @return
+        """
         return self.robot_state.next_state if self.robot_state else None
     
     @next_state.setter
     def next_state(self, state: State):
+        """
+        @brief Set the next state.
+        @param state:
+        """
         if self.robot_state:
             self.robot_state.next_state = state
         else:
@@ -310,20 +477,36 @@ class RobotInterface:
 
     @property
     def current_gait(self) -> Gait:
+        """
+        @brief Accessor for the current gait.
+        @return
+        """
         return self.robot_state.current_state.gait if self.robot_state else None
     
     @current_gait.setter
     def current_gait(self, gait: Gait):
+        """
+        @brief Set the current gait.
+        @param gait:
+        """
         self.update_gait(gait)
     
     @property
     def next_gait(self) -> Gait:
+        """
+        @brief Accessor for the next gait.
+        @return
+        """
         if not self.robot_state:
             return None
         return self.robot_state.next_state.gait if self.robot_state.next_state else None
     
     @next_gait.setter
     def next_gait(self, gait: Gait):
+        """
+        @brief Set the next gait.
+        @param gait:
+        """
         if self.robot_state:
             self.robot_state.next_state = State(mode=self.robot_state.current_state.mode, gait=gait, frequency=self.robot_state.current_state.frequency)
         else:
@@ -331,10 +514,18 @@ class RobotInterface:
 
     @property
     def current_mode(self) -> Mode:
+        """
+        @brief Accessor for the current mode.
+        @return
+        """
         return self.robot_state.current_state.mode if self.robot_state else None
 
     @current_mode.setter
     def current_mode(self, mode: Mode):
+        """
+        @brief Set the current mode.
+        @param mode:
+        """
         self.update_mode(mode)
 
     @property
@@ -344,6 +535,10 @@ class RobotInterface:
 
     @frequency.setter
     def frequency(self, value: float):
+        """
+        @brief Set the frequency.
+        @param value:
+        """
         self.robot_state.current_state.frequency = float(value)
 
     @property
@@ -353,149 +548,297 @@ class RobotInterface:
 
     @next_frequency.setter
     def next_frequency(self, value: float):
+        """
+        @brief Set the next frequency.
+        @param value:
+        """
         self.robot_state.next_state.frequency = float(value)
 
     @property
     def current_state(self) -> State:
+        """
+        @brief Accessor for the current state.
+        @return
+        """
         return self.robot_state.current_state if self.robot_state else None
 
     @property
     def prev_state(self) -> State:
+        """
+        @brief Accessor for the prev state.
+        @return
+        """
         return self.robot_state.previous_state if self.robot_state else None
     
     @property
     def next_state(self) -> State:
+        """
+        @brief Accessor for the next state.
+        @return
+        """
         return self.robot_state.next_state if self.robot_state else None
 
     @property
     def joint_positions(self) -> dict[Joint, float]:
+        """
+        @brief Accessor for the joint positions.
+        @return
+        """
         return self._joint_positions
     
     @property
     def joint_velocities(self) -> dict[Joint, float]:
+        """
+        @brief Accessor for the joint velocities.
+        @return
+        """
         return self._joint_velocities
 
     @property
     def body_position(self) -> list[float]:
+        """
+        @brief Accessor for the body position.
+        @return
+        """
         return self._body_position
 
     @property
     def body_orientation(self) -> list[float]:
+        """
+        @brief Accessor for the body orientation.
+        @return
+        """
         return self._body_orientatio
 
     @joint_positions.setter
     def joint_positions(self, joint_positions: dict[Joint, float]):
+        """
+        @brief Set the joint positions.
+        @param joint_positions:
+        """
         self._joint_positions.update(joint_positions)
 
     @joint_velocities.setter
     def joint_velocities(self, joint_velocities: dict[Joint, float]):
+        """
+        @brief Set the joint velocities.
+        @param joint_velocities:
+        """
         self._joint_velocities.update(joint_velocities)
 
     @body_position.setter
     def body_position(self, body_position: list[float]):
+        """
+        @brief Set the body position.
+        @param body_position:
+        """
         self._body_position = body_position
 
     @body_orientation.setter
     def body_orientation(self, body_orientation: list[float]):
+        """
+        @brief Set the body orientation.
+        @param body_orientation:
+        """
         self._body_orientation = body_orientation
 
     @property
     def foot_positions(self) -> dict[Foot, list[float]]:
+        """
+        @brief Accessor for the foot positions.
+        @return
+        """
         return self._foot_positions
 
     @foot_positions.setter
     def foot_positions(self, foot_positions: dict[Foot, list[float]]):
+        """
+        @brief Set the foot positions.
+        @param foot_positions:
+        """
         self._foot_positions.update(foot_positions)
 
     @property
     def stance_positions(self) -> dict[Foot, list[float]]:
+        """
+        @brief Accessor for the stance positions.
+        @return
+        """
         return self._stance_positions
 
     @stance_positions.setter
     def stance_positions(self, stance_positions: dict[Foot, list[float]]):
+        """
+        @brief Set the stance positions.
+        @param stance_positions:
+        """
         self._stance_positions.update(stance_positions)
 
     @property
     def hip_position(self) -> dict[Hip, list[float]]:
+        """
+        @brief Accessor for the hip position.
+        @return
+        """
         return self._hip_position
 
     @hip_position.setter
     def hip_position(self, hip_position: dict[Hip, list[float]]):
+        """
+        @brief Set the hip position.
+        @param hip_position:
+        """
         self._hip_position.update(hip_position)
 
     @property
     def thigh_position(self) -> dict[Thigh, list[float]]:
+        """
+        @brief Accessor for the thigh position.
+        @return
+        """
         return self._thigh_position
 
     @thigh_position.setter
     def thigh_position(self, thigh_position: dict[Thigh, list[float]]):
+        """
+        @brief Set the thigh position.
+        @param thigh_position:
+        """
         self._thigh_position.update(thigh_position)
 
     @property
     def target_positions(self) -> dict[Joint, float]:
+        """
+        @brief Accessor for the target positions.
+        @return
+        """
         return self._target_positions
 
     @target_positions.setter
     def target_positions(self, target_positions: dict[Joint, float]):
+        """
+        @brief Set the target positions.
+        @param target_positions:
+        """
         self._target_positions.update(target_positions)
 
     @property
     def target_velocities(self) -> dict[Joint, float]:
+        """
+        @brief Accessor for the target velocities.
+        @return
+        """
         return self._target_velocities
     
     @target_velocities.setter
     def target_velocities(self, target_velocities: dict[Joint, float]):
+        """
+        @brief Set the target velocities.
+        @param target_velocities:
+        """
         self._target_velocities.update(target_velocities)
 
     @property
     def target_torques(self) -> dict[Joint, float]:
+        """
+        @brief Accessor for the target torques.
+        @return
+        """
         return self._target_torques
     
     @target_torques.setter
     def target_torques(self, target_torques: dict[Joint, float]):
+        """
+        @brief Set the target torques.
+        @param target_torques:
+        """
         self._target_torques.update(target_torques)
 
     @property
     def enable_cpg(self) -> bool:
+        """
+        @brief Accessor for the enable cpg.
+        @return
+        """
         return self._enable_cpg
 
     @enable_cpg.setter
     def enable_cpg(self, value: bool):
+        """
+        @brief Set the enable cpg.
+        @param value:
+        """
         self._enable_cpg = value
 
     @property
     def cpg_alpha(self) -> float:
+        """
+        @brief Accessor for the cpg alpha.
+        @return
+        """
         return self._cpg_alpha
     
     @cpg_alpha.setter
     def cpg_alpha(self, value: float):
+        """
+        @brief Set the cpg alpha.
+        @param value:
+        """
         self._cpg_alpha = value
 
     @property
     def cpg_transition_speed(self) -> float:
+        """
+        @brief Accessor for the cpg transition speed.
+        @return
+        """
         return self._cpg_transition_speed
     
     @cpg_transition_speed.setter
     def cpg_transition_speed(self, value: float):
+        """
+        @brief Set the cpg transition speed.
+        @param value:
+        """
         self._cpg_transition_speed = value
     
     @property
     def body_velocity(self) -> float:
+        """
+        @brief Accessor for the body velocity.
+        @return
+        """
         return self._body_velocity
 
     @body_velocity.setter
     def body_velocity(self, value: float):
+        """
+        @brief Set the body velocity.
+        @param value:
+        """
         self._body_velocity = value
     
     @property
     def target_speed(self) -> float:
+        """
+        @brief Accessor for the target speed.
+        @return
+        """
         return self._target_speed
     
     @target_speed.setter
     def target_speed(self, value: float):
+        """
+        @brief Set the target speed.
+        @param value:
+        """
         self._target_speed = value
 
     def update_mode(self, new_mode: Mode):
+        """
+        @brief Update mode.
+        @param new_mode:
+        """
         if self.robot_state:
             new_state = State(mode=new_mode, gait=self.robot_state.current_state.gait, frequency=self.robot_state.current_state.frequency)
             self.update_state(new_state)
@@ -503,6 +846,10 @@ class RobotInterface:
             raise ValueError("Cannot update mode without an existing robot state. Please initialize the robot state first.")
 
     def update_gait(self, new_gait: Gait):
+        """
+        @brief Update gait.
+        @param new_gait:
+        """
         if self.robot_state:
             new_state = State(mode=self.robot_state.current_state.mode, gait=new_gait, frequency=self.robot_state.current_state.frequency)
             self.update_state(new_state)
@@ -534,11 +881,16 @@ class RobotInterface:
         self.robot_state.current_state = new_state
 
     def set_next_state(self, next_state: State):
+        """
+        @brief Set next state.
+        @param next_state:
+        """
         if self.robot_state:
             self.robot_state.next_state = next_state
 
 
 def main():
+    """@brief Main."""
     robot = RobotInterface(State(mode=Mode.STILL, gait=Gait.WALK, frequency=0.5))
     robot.update_state(State(mode=Mode.MOVING, gait=Gait.WALK, frequency=0.5))
     print("Current State:", robot.current_state)

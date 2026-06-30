@@ -1,3 +1,4 @@
+"""@brief plot_sinlge_run_oiacvspd.py — plot sinlge run oiacvspd."""
 import json
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,6 +34,16 @@ def compute_metrics(name,
                     cot,
                     torque):
 
+    """
+    @brief Compute metrics.
+    @param name:
+    @param roll:
+    @param pitch:
+    @param velocity:
+    @param cot:
+    @param torque:
+    @return
+    """
     roll = np.array(roll)
     pitch = np.array(pitch)
     velocity = np.array(velocity)
@@ -65,6 +76,12 @@ def compute_metrics(name,
 
 def plot_pd_vs_oiac(pd_file, oiac_file, smooth_window=10):
 
+    """
+    @brief Plot pd vs oiac.
+    @param pd_file:
+    @param oiac_file:
+    @param smooth_window:
+    """
     pd_data = load_robot_data(pd_file)
     oiac_data = load_robot_data(oiac_file)
 

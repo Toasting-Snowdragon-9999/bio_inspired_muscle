@@ -1,3 +1,10 @@
+"""@brief Muscle-like / adaptive-impedance PD controller for the Unitree Go2.
+
+Wraps one online-impedance adaptive controller (OIAC, ada_imp_ctrl) per leg and
+computes joint torques of the form tau = K(q_d - q) + B(dq_d - dq). Also provides
+an optional offline cost-function optimiser for the (a, b, k) impedance gains.
+"""
+
 import os
 import sys
 import numpy as np
@@ -26,6 +33,8 @@ DOF_PER_LEG = 3
 
 class MuscleLikePD:
     """
+    @brief Per-leg adaptive impedance controller for Unitree Go2.
+
     Per-leg adaptive impedance controller for Unitree Go2.
 
     Each leg has:
@@ -45,7 +54,12 @@ class MuscleLikePD:
         params: tuple[float, float, float] = (0.2, 5.0, 0.05),
         use_oiac: bool = True
     ) -> None:
+        """@brief Build one adaptive-impedance controller per leg and the supporting state buffers.
 
+        @param robot_interface: Central RobotInterface providing live joint positions/velocities.
+        @param params: Initial impedance gain tuple (a, b, k) passed to each per-leg controller.
+        @param use_oiac: If True the per-leg controllers run in adaptive OIAC mode; otherwise fixed-gain PD.
+        """
         self.robot_interface = robot_interface
         self.initial_params = params
         # One adaptive impedance controller per leg
@@ -70,6 +84,12 @@ class MuscleLikePD:
         dq_d: dict[Joint, float],
     ) -> dict[Foot, np.ndarray]:
 
+        """
+        @brief Control.
+        @param q_d:
+        @param dq_d:
+        @return
+        """
         q = self.robot_interface.joint_positions
         dq = self.robot_interface.joint_velocities
 
@@ -131,11 +151,20 @@ class MuscleLikePD:
         return outputs
     
     def update_params(self, new_params: tuple[float, float, float]):
+        """
+        @brief Update params.
+        @param new_params:
+        """
         for foot in Foot:
             self.impedance_controller[foot].a, self.impedance_controller[foot].b, self.impedance_controller[foot].k = new_params
 
     def cost_function(self, params):
 
+        """
+        @brief Cost function.
+        @param params:
+        @return
+        """
         a, b, k = params
 
         w = [1000.0, 100.0, 1e-4, 1e-5, 100.0]
@@ -218,6 +247,10 @@ class MuscleLikePD:
 
     def optimize_params(self):
 
+        """
+        @brief Optimize params.
+        @return
+        """
         bounds = [
             (0.01, 100.0),
             (0.1, 200.0),

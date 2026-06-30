@@ -1,3 +1,4 @@
+"""@brief heat_map.py — heat map."""
 import re
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,11 +19,13 @@ plt.rcParams.update({
 
 @dataclass
 class GaitFreqData:
+    """@brief GaitFreqData — gait freq data."""
     gait_name: str
     frequency_labels: List[str]
     values: List[float]
 
     def __post_init__(self):
+        """@brief Post-initialisation hook for the dataclass."""
         if len(self.frequency_labels) != len(self.values):
             raise ValueError(
                 f"frequency_labels length ({len(self.frequency_labels)}) "
@@ -31,13 +34,23 @@ class GaitFreqData:
 
 
 class HeatMap:
+    """@brief HeatMap — heat map."""
     def __init__(self, data):
+        """
+        @brief Construct a HeatMap instance.
+        @param data:
+        """
         self.data = data
         self._default_x_labels = None
         self._default_y_labels = None
 
     def plot(self, x_labels=None, y_labels=None):
 
+        """
+        @brief Plot.
+        @param x_labels:
+        @param y_labels:
+        """
         x_labels = x_labels if x_labels is not None else self._default_x_labels
         y_labels = y_labels if y_labels is not None else self._default_y_labels
 
@@ -105,6 +118,11 @@ class HeatMap:
 def build_heatmap_from_gaits(gait_data_list):
 
     # Collect ALL unique frequencies
+    """
+    @brief Build heatmap from gaits.
+    @param gait_data_list:
+    @return
+    """
     all_freqs = sorted(set(
         freq
         for gait in gait_data_list
@@ -141,6 +159,12 @@ def build_heatmap_from_gaits(gait_data_list):
 
 def parse_frequency_file(filepath, gait_name):
 
+    """
+    @brief Parse frequency file.
+    @param filepath:
+    @param gait_name:
+    @return
+    """
     frequency_data = {}
 
     current_freq = None
@@ -209,6 +233,7 @@ def parse_frequency_file(filepath, gait_name):
 
 def main():
 
+    """@brief Main."""
     walk_data = parse_frequency_file(
         "data/frequency_analysis_walk.txt",
         "Walk"

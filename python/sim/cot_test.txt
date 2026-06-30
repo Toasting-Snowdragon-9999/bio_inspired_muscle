@@ -1,4 +1,0 @@
-[TROT] Best CoT: 0.2636 at 1.90 Hz
-[TROT] Best CoT: 0.2619 at 2.00 Hz
-[TROT] Best CoT: 0.2583 at 1.95 Hz
-[TROT] Best CoT: 0.3777 at 2.00 Hz

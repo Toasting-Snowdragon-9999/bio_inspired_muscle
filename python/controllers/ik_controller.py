@@ -1,3 +1,11 @@
+"""@brief CPG → IK → PD locomotion pipeline orchestrator for the Unitree Go2.
+
+This module hosts the IKController, which steps the Kuramoto CPG to obtain
+Cartesian foot trajectories, converts them to joint targets via per-leg
+Levenberg-Marquardt inverse kinematics, and dispatches the resulting position
+and velocity targets to a muscle-like adaptive-impedance PD controller.
+"""
+
 import os
 import sys
 import numpy as np
@@ -28,6 +36,11 @@ home_position = { # IN JOINT ANGLES
 }
 
 def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinate]):
+    """@brief Pretty-print a per-foot Cartesian position table to stdout for debugging.
+
+    @param title: Heading printed above the table.
+    @param foot_positions: Mapping of Foot to a Coordinate (x, y, z) to display.
+    """
     print(f"\n{title}")
     print("-" * 40)
 
@@ -44,6 +57,8 @@ def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinat
 
 class IKController:
     """
+    @brief Foot-trajectory controller combining Kuramoto CPG and Levenberg-Marquardt IK.
+
     Foot-trajectory controller combining Kuramoto CPG and Levenberg-Marquardt IK.
     The CPG produces Cartesian foot positions; IK converts them to joint angles.
     """
@@ -57,6 +72,16 @@ class IKController:
         oval_offset: dict[OvalOffset, float] = None,
         ellipsoid_config: EllipsoidConfig = None
     ) -> None:
+        """@brief Construct the CPG, gait scheduler, trajectory builder, IK solvers and PD controller.
+
+        @param robot_interface: Central RobotInterface state hub shared by all sub-components.
+        @param stride_length: Optional per-foot stride width (m) passed to the TrajectoryBuilder.
+        @param step_height: Optional per-foot swing height (m) passed to the TrajectoryBuilder.
+        @param params: OIAC/adaptive-impedance gain tuple (a, b, k) forwarded to MuscleLikePD.
+        @param use_adaptive_pd: If True use the adaptive OIAC controller, otherwise plain PD.
+        @param oval_offset: Optional per-OvalOffset asymmetry parameters for the trajectory shape.
+        @param ellipsoid_config: Optional EllipsoidConfig describing the rotatable-ellipse foot path.
+        """
         self.robot_interface = robot_interface
 
         # CPG owns the foot trajectory generation
@@ -77,7 +102,9 @@ class IKController:
         # self.iteration = 0
 
     def reset(self) -> None:
-        """Reset all stateful controller components (CPG phases, IK warm-start).
+        """@brief Reset all stateful controller components (CPG phases, IK warm-start).
+
+        Reset all stateful controller components (CPG phases, IK warm-start).
         Call before re-running headless_sim with changed parameters on the same instance."""
         self.cpg.reset()
         # Reset IK warm-start positions to home so the solver doesn't start from
@@ -87,6 +114,8 @@ class IKController:
 
     def run(self) -> None:
         """
+        @brief Step CPG, solve IK for each leg, write joint targets to robot_interface.
+
         Step CPG, solve IK for each leg, write joint targets to robot_interface.
         Called once per simulation timestep via mjcb_control.
         """
@@ -227,6 +256,13 @@ class IKController:
         # ===== PD Control END =====
 
     def estimate_body_velocity(self):
+        """@brief Estimate forward body velocity from stance-leg foot velocities via the leg Jacobian.
+
+        For each foot currently in stance (phase within the duty-factor window) the
+        foot velocity is computed as J @ q_dot, negated to express body motion, and
+        the per-leg estimates are averaged. The forward (x) component is stored on
+        robot_interface.body_velocity.
+        """
         v_estimates = []
 
         phase_outputs = self.cpg.get_phase_outputs()
@@ -265,13 +301,29 @@ class IKController:
             self.robot_interface.body_velocity = float(avg_v_body[0])  # forward velocity only
 
     def keyboard_callback(self, window, key, scancode, act, mods):
+        """@brief GLFW keyboard event handler hook (currently a no-op beyond filtering non-press events).
+
+        @param window: GLFW window that received the event.
+        @param key: GLFW key code of the pressed/released key.
+        @param scancode: Platform-specific scancode for the key.
+        @param act: GLFW action (glfw.PRESS, glfw.RELEASE, glfw.REPEAT); only PRESS is handled.
+        @param mods: Bitfield of active modifier keys.
+        """
         if act != glfw.PRESS:
             return
 
     def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
-        """Proxy to CPG for oscillator graph overlay in MujocoSim."""
+        """@brief Proxy to CPG for oscillator graph overlay in MujocoSim.
+
+        Proxy to CPG for oscillator graph overlay in MujocoSim.
+        @return Tuple of oscillator output arrays as produced by the underlying CPG.
+        """
         return self.cpg.get_oscillator_outputs()
 
     def get_targets(self) -> dict[Joint, float]:
-        """Return the current joint targets from robot_interface."""
+        """@brief Return the current joint targets from robot_interface.
+
+        Return the current joint targets from robot_interface.
+        @return Mapping of Joint to the latest target joint angle (rad).
+        """
         return self.robot_interface.target_positions

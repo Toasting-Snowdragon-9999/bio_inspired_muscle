@@ -43,7 +43,9 @@ from gait_env import GaitParamEnv, RewardWeights, ALL_PARAM_KEYS, SHAPE_KEYS, de
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TrialLogger:
-    """Logs every evaluation to a CSV file for later analysis.
+    """@brief Logs every evaluation to a CSV file for later analysis.
+
+    Logs every evaluation to a CSV file for later analysis.
 
     CSV columns:
         trial, reward, cot, distance, velocity, avg_tilt, survived,
@@ -55,6 +57,10 @@ class TrialLogger:
     METRIC_COLS: list[str] = ["cot", "distance", "velocity", "avg_tilt", "survived"]
 
     def __init__(self, path: str) -> None:
+        """@brief Open the CSV file and write the header row.
+
+        @param path: Filesystem path for the CSV output file (overwritten if it exists).
+        """
         self._path = path
         self._file = open(path, "w", newline="")
         self._writer = csv.writer(self._file)
@@ -70,7 +76,15 @@ class TrialLogger:
         metrics: dict[str, float],
         params: dict[str, float],
     ) -> None:
-        """Append one evaluation row."""
+        """@brief Append one evaluation row.
+
+        Append one evaluation row.
+
+        @param trial_num: 1-based index of this evaluation.
+        @param reward: Scalar reward returned by the environment for the trial.
+        @param metrics: Metrics dict (cot, distance, velocity, avg_tilt, survived).
+        @param params: Full parameter dict for the trial (keyed by ALL_PARAM_KEYS).
+        """
         row: list[Any] = [trial_num, f"{reward:.6f}"]
         # Metrics in fixed order — handle None values (e.g. cot when robot fell)
         for col in self.METRIC_COLS:
@@ -83,7 +97,10 @@ class TrialLogger:
         self._file.flush()
 
     def close(self) -> None:
-        """Flush and close the underlying file."""
+        """@brief Flush and close the underlying file.
+
+        Flush and close the underlying file.
+        """
         if not self._file.closed:
             self._file.flush()
             self._file.close()
@@ -98,17 +115,31 @@ def _make_logging_callback(
     checkpoint_dir: str,
     print_every: int = 10,
 ):
-    """Factory that returns a LoggingCallback class.
+    """@brief Factory that returns a LoggingCallback class.
+
+    Factory that returns a LoggingCallback class.
 
     We import stable-baselines3 lazily so the rest of the file can be used
     without SB3 installed (e.g. when only running CMA-ES).
+
+    @param logger: TrialLogger that each episode is written to.
+    @param checkpoint_dir: Directory where the best PPO model is saved.
+    @param print_every: Print a progress line every this many episodes.
+    @return A ``LoggingCallback`` subclass of SB3's ``BaseCallback``.
     """
     from stable_baselines3.common.callbacks import BaseCallback
 
     class LoggingCallback(BaseCallback):
-        """Logs each episode to CSV, saves best checkpoint, prints progress."""
+        """@brief Logs each episode to CSV, saves best checkpoint, prints progress.
+
+        Logs each episode to CSV, saves best checkpoint, prints progress.
+        """
 
         def __init__(self, verbose: int = 0) -> None:
+            """@brief Initialise per-run tracking state for the callback.
+
+            @param verbose: SB3 verbosity level forwarded to ``BaseCallback``.
+            """
             super().__init__(verbose)
             self.trial_count: int = 0
             self.best_reward: float = -np.inf
@@ -119,8 +150,14 @@ def _make_logging_callback(
             self._feasible_count: int = 0
 
         def _on_step(self) -> bool:
-            """Called after every env.step(). Since episodes are single-step,
-            each call corresponds to one completed episode."""
+            """@brief Called after every env.step(). Since episodes are single-step,
+            each call corresponds to one completed episode.
+
+            Called after every env.step(). Since episodes are single-step,
+            each call corresponds to one completed episode.
+
+            @return True so SB3 continues training.
+            """
             infos = self.locals.get("infos", [])
             if not infos:
                 return True
@@ -181,7 +218,9 @@ def train_ppo(
     initial_params: dict[str, float] | None = None,
     curriculum_phase: int = 3,
 ) -> dict[str, float]:
-    """Train a PPO agent to optimise gait parameters.
+    """@brief Train a PPO agent to optimise gait parameters.
+
+    Train a PPO agent to optimise gait parameters.
 
     Each episode is a single env.step() that runs a full MuJoCo simulation
     and returns (obs, reward, terminated=True, ...).  PPO explores the 14-D
@@ -195,6 +234,18 @@ def train_ppo(
 
     Returns:
         Dictionary of the best gait parameters found during training.
+
+    @param gait: Gait pattern to optimise.
+    @param total_timesteps: Number of PPO training timesteps (= episodes here).
+    @param reward_weights: Weights for the multi-component reward.
+    @param output_csv: CSV path that every episode is logged to.
+    @param checkpoint_dir: Directory for the best/final PPO model checkpoints.
+    @param resume_path: Optional path to a saved PPO model .zip to resume from.
+    @param sim_length: Duration of the measurement phase per episode (seconds).
+    @param warmup: Duration of the warmup phase per episode (seconds).
+    @param verbose: If True, print MuJoCo/IK warnings during simulation.
+    @param curriculum_phase: 1, 2, or 3 — gates which reward terms are summed.
+    @return Dictionary of the best gait parameters found during training.
     """
     from stable_baselines3 import PPO
 
@@ -273,7 +324,9 @@ def train_cma(
     cma_state_path: str | None = None,
     curriculum_phase: int = 3,
 ) -> dict[str, float]:
-    """Optimise gait parameters with CMA-ES.
+    """@brief Optimise gait parameters with CMA-ES.
+
+    Optimise gait parameters with CMA-ES.
 
     CMA-ES operates in the normalised [-1, 1] action space of the Gymnasium
     environment.  It minimises a cost function, so we negate the reward.
@@ -295,6 +348,18 @@ def train_cma(
 
     Returns:
         Dictionary of the best gait parameters found during optimisation.
+
+    @param gait: Gait pattern to optimise.
+    @param n_generations: Number of CMA-ES generations to run this call.
+    @param reward_weights: Weights for the multi-component reward.
+    @param output_csv: CSV path that every evaluation is logged to.
+    @param population_size: CMA-ES population size (None = auto-select).
+    @param sigma0: Initial CMA-ES step size in normalised space.
+    @param sim_length: Duration of the measurement phase per episode (seconds).
+    @param warmup: Duration of the warmup phase per episode (seconds).
+    @param verbose: If True, print MuJoCo/IK warnings and CMA-ES internals.
+    @param curriculum_phase: 1, 2, or 3 — gates which reward terms are summed.
+    @return Dictionary of the best gait parameters found during optimisation.
     """
     import cma
 
@@ -430,7 +495,13 @@ def train_cma(
 
     # ── Objective: CMA-ES minimises, so we negate the reward ─────────────────
     def evaluate(action: np.ndarray) -> float:
-        """Run one simulation and return negative reward (for minimisation)."""
+        """@brief Run one simulation and return negative reward (for minimisation).
+
+        Run one simulation and return negative reward (for minimisation).
+
+        @param action: Candidate action vector in the normalised [-1, 1] space.
+        @return Negated reward (CMA-ES minimises, so lower is better).
+        """
         nonlocal trial_count, best_reward, best_metrics, best_params, feasible_count
         # Diagnostic wrapper: surfaces any exception that escapes
         # ``_run_simulation``'s own try/except (e.g. raised inside
@@ -535,12 +606,28 @@ def print_results(
     algo: str,
     gait_name: str = "TROT",
 ) -> None:
-    """Print a summary of the best result and a copy-pasteable re-run command."""
+    """@brief Print a summary of the best result and a copy-pasteable re-run command.
+
+    Print a summary of the best result and a copy-pasteable re-run command.
+
+    @param best_params: Best gait parameter dict found by the optimiser.
+    @param best_reward: Reward of the best candidate.
+    @param best_metrics: Metrics dict for the best candidate.
+    @param algo: Algorithm label used in the report header ("PPO" / "CMA-ES").
+    @param gait_name: Gait name used in the copy-pasteable re-run command.
+    """
     print("\n" + "=" * 72)
     print(f"  {algo} — Best Result")
     print("=" * 72)
     def _fmt(val, fmt=".4f"):
-        """Format a metric value, treating None as NaN."""
+        """@brief Format a metric value, treating None as NaN.
+
+        Format a metric value, treating None as NaN.
+
+        @param val: Value to format (may be None).
+        @param fmt: Python format spec applied when ``val`` is not None.
+        @return Formatted string, or "nan" when ``val`` is None.
+        """
         return f"{val:{fmt}}" if val is not None else "nan"
 
     print(f"  Reward   : {best_reward:+.4f}")
@@ -587,7 +674,13 @@ def print_results(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for the RL trainer."""
+    """@brief Parse command-line arguments for the RL trainer.
+
+    Parse command-line arguments for the RL trainer.
+
+    @return Parsed argparse.Namespace covering algorithm selection, gait,
+        PPO/CMA-ES hyperparameters, reward weights, curriculum phase, and I/O paths.
+    """
     p = argparse.ArgumentParser(
         description="Reinforcement learning gait parameter optimizer (PPO / CMA-ES).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -679,6 +772,12 @@ def parse_args() -> argparse.Namespace:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """@brief CLI entry point: build the run config and dispatch to PPO or CMA-ES.
+
+    Parses arguments, resolves the gait enum, assembles the reward weights and
+    output paths, loads any initial-guess JSON, runs the selected optimiser, and
+    optionally writes the best-params dict back out as JSON for the GUI flow.
+    """
     args = parse_args()
 
     # ── Resolve gait enum ────────────────────────────────────────────────────

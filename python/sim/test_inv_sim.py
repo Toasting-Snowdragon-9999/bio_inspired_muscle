@@ -1,3 +1,8 @@
+"""@brief Standalone demo: exercise the Levenberg-Marquardt IK solver inside the MuJoCo sim.
+
+Entry-point script that builds a per-foot IK solver, wraps it in ``TestInvSim``, and
+runs a rendered air-mode simulation that drives each foot toward a target Cartesian position.
+"""
 import os
 import sys
 import numpy as np
@@ -9,7 +14,10 @@ from inverse_kinematics.simple_inv import LevenbegMarquardtIK
 from shared_module.robot_state import Foot, Joint, RobotInterface, State, Mode, Gait
 
 class TestInvSim:
-    """Test the inverse kinematic solver in this simulation environment."""
+    """Test the inverse kinematic solver in this simulation environment.
+
+    @brief Controller that solves per-foot IK each tick and publishes the resulting joint targets.
+    """
     def __init__(
         self,
         model,
@@ -18,6 +26,14 @@ class TestInvSim:
         solvers: dict[Foot, LevenbegMarquardtIK],
         target_pos: dict[Foot, list[float]],
     ):
+        """@brief Cache model/data handles, IK solvers, targets, and joint-address lookups.
+
+        @param model: MuJoCo MjModel for the loaded scene.
+        @param data: MuJoCo MjData state container associated with the model.
+        @param robot_interface: Shared RobotInterface that receives the solved target positions.
+        @param solvers: Mapping from Foot to its Levenberg-Marquardt IK solver.
+        @param target_pos: Mapping from Foot to its desired Cartesian goal position [x, y, z].
+        """
         self.model = model
         self.data = data
         self.robot_interface = robot_interface
@@ -43,7 +59,10 @@ class TestInvSim:
         }
 
     def run(self) -> None:
-        """Solve IK for each configured foot and write joint targets to RobotInterface."""
+        """@brief Solve IK for each configured foot and write joint targets to RobotInterface.
+
+        Solve IK for each configured foot and write joint targets to RobotInterface.
+        """
         if self._in_run:
             return
 
@@ -84,6 +103,7 @@ class TestInvSim:
 
 
 def main():
+    """@brief Entry point: build per-foot IK solvers and run the air-mode IK tracking demo."""
 
     # target_pos = {
     #     Foot.FL: [0.1795716643722928, 0.14149099862255338, 0.18806348777447116], 

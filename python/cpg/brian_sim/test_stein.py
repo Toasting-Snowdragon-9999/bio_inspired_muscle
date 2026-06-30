@@ -1,3 +1,4 @@
+"""@brief Run and plot the Brian2 Stein phase-oscillator CPG simulation, mapping outputs to hip-joint activations."""
 from python.cpg.brian_sim.stein_oscillator import SteinCPGsim
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,6 +17,11 @@ Neuron 3 → Rear  Left  (RL)
 
 
 def map_cpg_output_to_activation(result, front: bool):
+    """@brief Map a normalised CPG output signal to a hip-joint target angle within the leg's position range.
+    @param result: CPG output array to normalise and rescale.
+    @param front: True for front-leg hip range, False for rear-leg hip range.
+    @return array of target hip angles (radians) mapped into the selected range.
+    """
     FRONT_HIP_POS_RANGE = (-1.5708, 3.4907)  # radians
     BACK_HIP_POS_RANGE  = (-0.5236, 4.5379)  # radians
     max_val = np.max(result)
@@ -37,7 +43,8 @@ def map_cpg_output_to_activation(result, front: bool):
 
 
 def main():
-    """Test the Stein phase-oscillator CPG."""
+    """@brief Run the Stein phase-oscillator CPG, plot per-neuron activations, save the figure, and print analysis.
+    Test the Stein phase-oscillator CPG."""
 
     # Create oscillator (default: trot gait at 1 Hz)
     cpg = SteinCPGsim(dt=0.001)

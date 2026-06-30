@@ -1,3 +1,4 @@
+"""@brief mujoco_kuramoto_test.py — mujoco kuramoto test."""
 import os
 import sys
 from enum import Enum
@@ -31,6 +32,7 @@ plt.rcParams.update({
 os.environ["G_MESSAGES_DEBUG"] = "none"
 
 class Terrain(Enum):
+    """@brief Terrain — terrain."""
     flat = "Flat"
     tiny_hills = "Tiny Hills"
     rough = "Rough"
@@ -39,6 +41,12 @@ class Terrain(Enum):
     tricky = "Tricky"
 
 def set_spawn(sim, terrain):
+    """
+    @brief Set spawn.
+    @param sim:
+    @param terrain:
+    @return
+    """
     starting_state = None
     if terrain == Terrain.flat:
         starting_state = [0.0, 0.0, 0.455]
@@ -78,6 +86,11 @@ def set_spawn(sim, terrain):
     return starting_state[2]
 
 def get_sim_xml(terrain):
+    """
+    @brief Get sim xml.
+    @param terrain:
+    @return
+    """
     if terrain == Terrain.flat:
         return os.path.join(os.path.dirname(__file__), 'go2', 'scene.xml')
     elif terrain == Terrain.tiny_hills:
@@ -92,6 +105,11 @@ def get_sim_xml(terrain):
         return os.path.join(os.path.dirname(__file__), 'go2', 'scene_perlin_noise_large_mountain.xml')
 
 def compute_contact_statistics(footfall_comparison):
+    """
+    @brief Compute contact statistics.
+    @param footfall_comparison:
+    @return
+    """
     stats = {}
 
     for foot in Foot:
@@ -131,6 +149,12 @@ def compute_contact_statistics(footfall_comparison):
     return stats
 
 def compute_duty_cycles(footfall_comparison, dt):
+    """
+    @brief Compute duty cycles.
+    @param footfall_comparison:
+    @param dt:
+    @return
+    """
     if len(footfall_comparison) == 0:
         return {}
     
@@ -160,6 +184,11 @@ def compute_duty_cycles(footfall_comparison, dt):
     return duty_cycles
 
 def plot_footfall(footfall_comparison, dt):
+    """
+    @brief Plot footfall.
+    @param footfall_comparison:
+    @param dt:
+    """
     if footfall_comparison is not None:
         time = np.arange(len(footfall_comparison)) * dt
 
@@ -294,6 +323,7 @@ def graph_roll_pitch(robot_data_list, tmin=None, tmax=None):
     plt.show()
 
 def elip_traj_test():
+    """@brief Elip traj test."""
     try: 
         gait = Gait.TROT
 
@@ -340,6 +370,7 @@ def elip_traj_test():
     #     compute_contact_statistics(footfall_comparison)
 
 def main():
+    """@brief Main."""
     elip_traj_test()
     return
     

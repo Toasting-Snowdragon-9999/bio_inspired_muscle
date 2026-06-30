@@ -1,3 +1,6 @@
+"""@brief Project-wide constants: joint position ranges and midpoints, CPG neuron counts,
+and the mapping dictionaries between neurons, feet, joints, MuJoCo actuators/sensors, and labels."""
+
 import numpy as np
 from enum import Enum
 try:

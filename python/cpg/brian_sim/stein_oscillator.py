@@ -1,3 +1,4 @@
+"""@brief Brian2 simulation of a Stein/Kuramoto phase-oscillator CPG for quadruped gaits, with analysis utilities."""
 import brian2 as b2
 from brian2 import (
     second, ms, Hz,
@@ -10,6 +11,7 @@ from scipy.fft import fft, fftfreq
 
 class SteinCPGsim:
     """
+    @brief Brian2 Stein/Kuramoto phase-oscillator CPG with gait presets and phase-locking analysis.
     Stein (phase) oscillator CPG for quadruped locomotion.
 
     Each oscillator is described by a single phase variable θ_i:
@@ -40,6 +42,9 @@ class SteinCPGsim:
     }
 
     def __init__(self, dt=0.001):
+        """@brief Build the Brian2 phase-oscillator group, coupling weights, default gait, and monitors.
+        @param dt: integration timestep in seconds (converted to a Brian2 quantity).
+        """
         self.dt = dt * second
 
         # ── Brian2 equations ────────────────────────────────────────
@@ -88,6 +93,7 @@ class SteinCPGsim:
         # ── Network operation: update coupling at each step ─────────
         @network_operation(dt=self.dt)
         def update_coupling():
+            """@brief Brian2 network operation: recompute each oscillator's phase-coupling input each timestep."""
             thetas = np.array(self.neurons.theta[:])
             coupling = np.zeros(self.neurons_cnt)
             for i in range(self.neurons_cnt):
@@ -113,6 +119,8 @@ class SteinCPGsim:
 
     def set_gait(self, gait_name: str):
         """
+        @brief Select a preset gait by name, rebuilding the phase-offset matrix and seeding initial phases.
+        @param gait_name: one of the preset gaits (trot, walk, bound, pace, gallop).
         Set gait by name.  Also resets initial phases to match the
         desired pattern so the network locks in quickly.
 
@@ -130,6 +138,8 @@ class SteinCPGsim:
 
     def set_custom_gait(self, desired_phases: np.ndarray):
         """
+        @brief Set an arbitrary gait from a desired per-oscillator phase vector.
+        @param desired_phases: phase vector of length neurons_cnt (radians), one entry per oscillator.
         Set an arbitrary gait by providing the desired phase vector
         (one entry per oscillator, in radians).
         """
@@ -144,7 +154,9 @@ class SteinCPGsim:
         self._current_gait = 'custom'
 
     def _build_phase_offset_matrix(self, desired_phases: np.ndarray):
-        """Build the φ_ij matrix from a desired-phase vector."""
+        """@brief Build the φ_ij matrix from a desired-phase vector.
+        @param desired_phases: per-oscillator target phases (radians) defining the gait pattern.
+        Build the φ_ij matrix from a desired-phase vector."""
         n = self.neurons_cnt
         self.phase_offsets = np.zeros((n, n))
         for i in range(n):
@@ -154,21 +166,29 @@ class SteinCPGsim:
     # ── Frequency control ───────────────────────────────────────────
 
     def set_frequency(self, freq_hz: float):
-        """Set intrinsic oscillation frequency for all oscillators (Hz)."""
+        """@brief Set intrinsic oscillation frequency for all oscillators (Hz).
+        @param freq_hz: intrinsic cycle frequency applied to every oscillator (Hz).
+        Set intrinsic oscillation frequency for all oscillators (Hz)."""
         self.neurons.omega = freq_hz * 2 * np.pi * Hz
 
     def set_frequency_per_neuron(self, freqs_hz):
-        """Set per-oscillator intrinsic frequencies (Hz)."""
+        """@brief Set per-oscillator intrinsic frequencies (Hz).
+        @param freqs_hz: array-like of per-oscillator intrinsic frequencies (Hz).
+        Set per-oscillator intrinsic frequencies (Hz)."""
         freqs_hz = np.asarray(freqs_hz, dtype=float)
         self.neurons.omega = freqs_hz * 2 * np.pi * Hz
 
     # ── Simulation lifecycle ────────────────────────────────────────
 
     def reset(self):
+        """@brief Restore the network to its stored initial state."""
         self.net.restore('initial')
 
     def run(self, duration):
-        """Run the CPG for *duration* seconds. Returns a results dict."""
+        """@brief Run the CPG for *duration* seconds. Returns a results dict.
+        @param duration: simulation length in seconds.
+        @return dict with 'time' plus per-neuron phase and output arrays.
+        Run the CPG for *duration* seconds. Returns a results dict."""
         self.net.run(duration * second)
 
         return_dict = {'time': self.mon.t / second}
@@ -182,6 +202,11 @@ class SteinCPGsim:
 
     def analyze_oscillations(self, results, neuron_idx=0, skip_initial_seconds=2.0):
         """
+        @brief Analyze a neuron's output oscillation: peak-based cycle frequency and FFT spectral frequency.
+        @param results: results dict returned by run().
+        @param neuron_idx: zero-based index of the neuron to analyze.
+        @param skip_initial_seconds: leading transient duration (seconds) to discard before analysis.
+        @return dict of oscillation metrics (cycle/spectral frequency, period stats, peaks); NaN-filled if too few peaks.
         Analyze oscillation characteristics of a neuron's output.
 
         Returns both:
@@ -257,6 +282,10 @@ class SteinCPGsim:
 
     def analyze_phase_locking(self, results, skip_initial_seconds=2.0):
         """
+        @brief Measure how closely each oscillator pair locked to its desired phase offset.
+        @param results: results dict returned by run().
+        @param skip_initial_seconds: leading transient duration (seconds) to discard before analysis.
+        @return dict keyed by (i, j) pair of mean/std circular phase error and the desired offset (radians).
         Measure how well oscillators have locked to the desired phase
         offsets.  Returns mean and std of phase errors for each pair.
         """
@@ -284,6 +313,9 @@ class SteinCPGsim:
 
     def print_analysis(self, results, skip_initial_seconds=2.0):
         """
+        @brief Print per-neuron oscillation analysis plus pairwise phase-locking quality.
+        @param results: results dict returned by run().
+        @param skip_initial_seconds: leading transient duration (seconds) to discard before analysis.
         Print oscillation analysis for all neurons, plus phase-locking quality.
         """
         print("\n" + "=" * 60)

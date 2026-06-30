@@ -1,3 +1,10 @@
+"""@brief Generate a smoothed grayscale height field from a checkerboard image.
+
+Reads ``checkers_128.png`` as grayscale, applies a Gaussian blur to soften
+the hard edges, and writes the result to ``checkers_128_blurred.png`` for use
+as a Go2 simulation height map.
+"""
+
 import cv2
 
 img = cv2.imread(

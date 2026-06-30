@@ -1,3 +1,14 @@
+"""
+@brief Gaussian-process parameter sweep for ellipsoid gait trajectories.
+
+Drives the headless MuJoCo simulation to tune the 12 ellipsoid shape
+parameters (plus frequency) of a quadruped gait by minimising Cost of
+Transport (CoT). Supports a single GUI run for visual inspection
+(``elip_traj_test``) and a two-phase Bayesian-optimisation sweep
+(``run_sweep``) that alternates between shape-only and frequency-only
+search with random pre-sampling to seed the Gaussian-process surrogate.
+``duty_factor`` is fixed throughout and never optimised.
+"""
 import os
 import sys
 import csv
@@ -34,9 +45,15 @@ ALL_KEYS: list[str] = ["freq"] + SHAPE_KEYS
 
 def default_cfg(gait: Gait) -> dict[str, float]:
     """
+    @brief Return a dict of hardcoded default parameters for the requested gait.
+
     Return a dict of hardcoded default parameters for the requested gait.
     duty_factor is included here but is never modified by the sweep — it is
     passed verbatim into every simulation run.
+
+    @param gait: Gait type whose default parameter table to return.
+    @return Dict of all 14 parameter values; falls back to the WALK defaults
+        for an unknown gait.
     """
     if gait == Gait.WALK:
         return {
@@ -129,7 +146,15 @@ def default_cfg(gait: Gait) -> dict[str, float]:
 
 
 def _make_bounds(keys: list[str], reference: dict[str, float]) -> list[tuple[float, float]]:
-    """Build (low, high) bounds for the given parameter keys relative to a reference dict."""
+    """@brief Build (low, high) bounds for the given parameter keys relative to a reference dict.
+
+    Build (low, high) bounds for the given parameter keys relative to a reference dict.
+
+    @param keys: Parameter keys to build bounds for.
+    @param reference: Reference dict supplying the centre value of each key.
+    @return List of ``(low, high)`` tuples, one per key — ±15% of the
+        reference magnitude, widened to ``MIN_HALF_RANGE`` for near-zero values.
+    """
     bounds = []
     for k in keys:
         v = reference[k]
@@ -140,6 +165,14 @@ def _make_bounds(keys: list[str], reference: dict[str, float]) -> list[tuple[flo
 
 
 def parse_args() -> argparse.Namespace:
+    """@brief Parse command-line arguments for the single-run / sweep entry point.
+
+    Parses ``--gait`` first so per-gait defaults from ``default_cfg`` can be used
+    as the defaults for every parameter flag.
+
+    @return Parsed argparse.Namespace with gait, all 14 parameters, and the
+        sweep-mode options.
+    """
     # ── Pre-parse to find --gait so we can load defaults from default_cfg ────
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--gait", type=str, default="WALK")
@@ -189,7 +222,16 @@ def parse_args() -> argparse.Namespace:
 def _build_sim_and_controller(
     freq: float, cfg: EllipsoidConfig, duty_factor: float = 0.5, gait: Gait = Gait.WALK
 ) -> tuple[MujocoSim, IKController, RobotInterface]:
-    """Create a fresh MujocoSim + IKController for the given parameters."""
+    """@brief Create a fresh MujocoSim + IKController for the given parameters.
+
+    Create a fresh MujocoSim + IKController for the given parameters.
+
+    @param freq: Gait frequency (Hz).
+    @param cfg: Ellipsoid trajectory configuration for the controller.
+    @param duty_factor: Fraction of the cycle spent in stance (0-1).
+    @param gait: Gait pattern controlling the CPG phase offsets.
+    @return Tuple ``(sim, controller, robot_interface)`` ready for a headless run.
+    """
     robot_interface = RobotInterface(
         starting_state=State(mode=Mode.MOVING, gait=gait, frequency=freq),
         trajectory_method=TrajectoryMethod.ELLIPSOID,
@@ -212,7 +254,13 @@ def _build_sim_and_controller(
 
 
 def _dict_to_cfg(d: dict) -> EllipsoidConfig:
-    """Build an EllipsoidConfig from a param dict (keys are SHAPE_KEYS)."""
+    """@brief Build an EllipsoidConfig from a param dict (keys are SHAPE_KEYS).
+
+    Build an EllipsoidConfig from a param dict (keys are SHAPE_KEYS).
+
+    @param d: Parameter dict containing every SHAPE_KEYS entry.
+    @return EllipsoidConfig populated from the 12 shape values in ``d``.
+    """
     return EllipsoidConfig(
         front_x_fore   = d["front_x_fore"],
         front_x_hind   = d["front_x_hind"],
@@ -231,11 +279,19 @@ def _dict_to_cfg(d: dict) -> EllipsoidConfig:
 
 def evaluate_params(param_dict: dict, duty_factor: float, gait: Gait = Gait.WALK, verbose: bool = False) -> float:
     """
+    @brief Run one headless simulation and return the COT.
+
     Run one headless simulation and return the COT.
     duty_factor is passed explicitly and is never varied by the optimiser.
     gait controls the CPG phase offsets — must match the intended gait pattern.
     Returns PENALTY_COT on any failure (robot fell, IK error, etc.).
     Suppresses MuJoCo/IK warnings unless verbose=True.
+
+    @param param_dict: Parameter dict containing ``freq`` and the 12 shape keys.
+    @param duty_factor: Fixed duty factor passed straight into the simulation.
+    @param gait: Gait pattern controlling the CPG phase offsets.
+    @param verbose: If True, allow MuJoCo/IK warnings through instead of suppressing them.
+    @return Measured Cost of Transport, or PENALTY_COT on failure / invalid CoT.
     """
     import io, contextlib
     freq = param_dict["freq"]
@@ -260,6 +316,14 @@ def evaluate_params(param_dict: dict, duty_factor: float, gait: Gait = Gait.WALK
 # ─────────────────────────────────────────────────────────────────────────────
 
 def elip_traj_test(gait_enum: Gait = Gait.WALK):
+    """@brief Run a single windowed GUI simulation and report its Cost of Transport.
+
+    Builds the sim and controller from the parsed CLI arguments, runs a 10 s
+    visualised simulation with a 2 s warmup, then measures CoT.
+
+    @param gait_enum: Gait pattern to simulate.
+    @return Measured Cost of Transport for the run.
+    """
     args = parse_args()
 
     robot_interface = RobotInterface(starting_state=State(mode=Mode.MOVING, gait=gait_enum, frequency=args.freq), trajectory_method=TrajectoryMethod.ELLIPSOID, duty_factor=args.duty_factor)
@@ -298,6 +362,8 @@ def elip_traj_test(gait_enum: Gait = Gait.WALK):
 
 def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], gait: Gait = Gait.WALK) -> None:
     """
+    @brief Two-phase Bayesian optimisation of ellipsoid trajectory parameters.
+
     Two-phase Bayesian optimisation of ellipsoid trajectory parameters.
 
     duty_factor is NEVER varied — it is fixed from initial_params throughout.
@@ -315,6 +381,12 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
     the current phase terminates early.
 
     All trials are logged to CSV.
+
+    @param n_calls: Total optimisation evaluations granted to phase 1 per restart.
+    @param output_path: CSV path that every trial row is appended to.
+    @param initial_params: Starting values for ``freq``, the 12 shape keys, and
+        the fixed ``duty_factor``; the search is centred on these.
+    @param gait: Gait pattern controlling the CPG phase offsets.
     """
     from skopt import gp_minimize
     from skopt.callbacks import EarlyStopper
@@ -341,7 +413,9 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
 
     # ── Early stopping callback ───────────────────────────────────────────────
     class ConvergenceStopper(EarlyStopper):
-        """Stops if best COT improves < tol fraction over the last `window` evals.
+        """@brief Stops if best COT improves < tol fraction over the last `window` evals.
+
+        Stops if best COT improves < tol fraction over the last `window` evals.
         Requires at least `min_successes` non-penalty evaluations before it can
         fire — prevents premature termination when the failure rate is very high
         and all recent func_vals are PENALTY_COT.
@@ -349,12 +423,25 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
         exhaust a large neighbourhood before declaring convergence.
         """
         def __init__(self, window: int = 200, tol: float = 0.005, min_successes: int = 30):
+            """@brief Configure the convergence-based early stopper.
+
+            @param window: Number of most-recent evaluations to measure improvement over.
+            @param tol: Minimum fractional improvement required to keep going.
+            @param min_successes: Minimum non-penalty evaluations before the
+                stopper is allowed to fire.
+            """
             super().__init__()
             self.window = window
             self.tol = tol
             self.min_successes = min_successes
 
         def _criterion(self, result):
+            """@brief Decide whether the optimisation has converged.
+
+            @param result: skopt result object exposing ``func_vals`` so far.
+            @return True if improvement over the window has fallen below ``tol``
+                (and enough successful evaluations exist), else False.
+            """
             import numpy as _np
             vals = _np.array(result.func_vals)
             # Don't stop until we have enough successful (non-penalty) evaluations
@@ -388,6 +475,11 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
         best_cot_phase1 = [PENALTY_COT]
 
         def phase1_objective(x: list[float]) -> float:
+            """@brief Phase 1 objective: evaluate a shape-only candidate at fixed freq.
+
+            @param x: Candidate values for the 12 SHAPE_KEYS (in order).
+            @return Measured CoT (or PENALTY_COT on failure); also logged to CSV.
+            """
             trial_counter[0] += 1
             d = {k: v for k, v in zip(SHAPE_KEYS, x)}
             d["freq"] = fixed_freq
@@ -502,6 +594,11 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
         best_cot_phase2 = [phase1_best_cot]  # phase 2 must beat phase 1 to trigger a restart
 
         def phase2_objective(x: list[float]) -> float:
+            """@brief Phase 2 objective: evaluate a frequency candidate at fixed shape.
+
+            @param x: Single-element list holding the candidate frequency.
+            @return Measured CoT (or PENALTY_COT on failure); also logged to CSV.
+            """
             trial_counter[0] += 1
             trial_freq = x[0]
             d = {**phase1_best_shape, "freq": trial_freq}
@@ -580,6 +677,12 @@ def run_sweep(n_calls: int, output_path: str, initial_params: dict[str, float], 
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    """@brief CLI entry point: dispatch to a single GUI run or the sweep.
+
+    Parses arguments, resolves the gait enum, and either launches the Bayesian
+    optimisation sweep (``--sweep``) or a single visualised run, printing the
+    resulting Cost of Transport.
+    """
     args = parse_args()
 
     # Resolve gait enum — fall back to WALK if unrecognised

@@ -1,3 +1,11 @@
+"""
+@brief Inverse-kinematics module for the Unitree Go2 legs.
+
+Provides the analytical forward kinematics and Jacobian for a single leg, a
+MuJoCo-to-IK frame conversion helper, a damped-least-squares Levenberg-Marquardt
+IK solver mapping Cartesian foot targets to joint angles, and a standalone test
+routine for validating IK against reference foot positions.
+"""
 import os, sys
 import numpy as np
 from enum import Enum, auto
@@ -34,7 +42,12 @@ HIP_OFFSETS = {
 # ── Forward kinematics ────────────────────────────────────
 
 def forward_kinematics(q: np.ndarray, d_y: float):
-
+    """
+    @brief Compute the foot position in the hip frame from leg joint angles.
+    @param q: Array of the three joint angles (hip abduction, thigh, calf) in radians.
+    @param d_y: Lateral hip-to-thigh offset (meters) for the leg, signed by side.
+    @return numpy array [x, y, z] of the foot position in the hip frame (meters).
+    """
     q1, q2, q3 = q
 
     s_q1, c_q1 = np.sin(q1), np.cos(q1)
@@ -57,7 +70,12 @@ def forward_kinematics(q: np.ndarray, d_y: float):
 # ── Frame conversion (MuJoCo → IK hip frame) ──────────────
 
 def convert_frame(pos: np.ndarray, leg: Foot):
-
+    """
+    @brief Convert a foot position from the MuJoCo frame into the IK hip frame.
+    @param pos: Foot position [x, y, z] in the MuJoCo frame (meters).
+    @param leg: The Foot whose frame convention is being applied.
+    @return numpy array of the foot position expressed in the IK hip frame.
+    """
     p = pos.copy()
 
     # MuJoCo: Z up
@@ -74,8 +92,13 @@ def convert_frame(pos: np.ndarray, leg: Foot):
 
 # ── Analytical Jacobian ───────────────────────────────────
 
-def leg_jacobian(q: np.ndarray, d_y: float) -> np.ndarray:  
-
+def leg_jacobian(q: np.ndarray, d_y: float) -> np.ndarray:
+    """
+    @brief Compute the analytical 3x3 leg Jacobian mapping joint rates to foot velocity.
+    @param q: Array of the three joint angles (hip abduction, thigh, calf) in radians.
+    @param d_y: Lateral hip-to-thigh offset (meters) for the leg, signed by side.
+    @return 3x3 numpy Jacobian matrix d(foot position)/d(joint angles) in the hip frame.
+    """
     q1, q2, q3 = q
 
     s_q1, c_q1 = np.sin(q1), np.cos(q1)
@@ -104,6 +127,13 @@ def leg_jacobian(q: np.ndarray, d_y: float) -> np.ndarray:
     ])
 
 def estimate_body_velocity(q, q_dot, d_y):
+    """
+    @brief Estimate body velocity from a stance leg's joint state via the leg Jacobian.
+    @param q: Array of the three joint angles (hip abduction, thigh, calf) in radians.
+    @param q_dot: Array of the corresponding joint velocities (rad/s).
+    @param d_y: Lateral hip-to-thigh offset (meters) for the leg, signed by side.
+    @return numpy array of the estimated body velocity (negated foot velocity) in the hip frame.
+    """
     J = leg_jacobian(q, d_y)
     v_foot = J @ q_dot
     v_body = -v_foot
@@ -112,6 +142,13 @@ def estimate_body_velocity(q, q_dot, d_y):
 # ── Levenberg–Marquardt IK ─────────────────────────────────
 
 class LevenbergMarquardtIK:
+    """
+    @brief Damped-least-squares (Levenberg-Marquardt) inverse-kinematics solver for one Go2 leg.
+
+    Iteratively refines the thigh and calf joint angles so the analytical forward kinematics
+    matches a Cartesian foot target in the sagittal (x, z) plane, clamping each iterate to the
+    leg's joint limits.
+    """
 
     def __init__(
         self,
@@ -121,7 +158,14 @@ class LevenbergMarquardtIK:
         damping=0.05,
         max_iter=500
     ):
-
+        """
+        @brief Construct the solver for a given leg with its geometry and convergence settings.
+        @param leg: The Foot this solver targets; selects leg geometry and joint limits.
+        @param step_size: Scale applied to each Levenberg-Marquardt joint-angle update.
+        @param tol: Cartesian error norm (meters) below which iteration is considered converged.
+        @param damping: Levenberg-Marquardt damping factor added to the normal equations.
+        @param max_iter: Maximum number of solver iterations before declaring non-convergence.
+        """
         self.leg = leg
         self.config = LEG_CONFIG[leg]
 
@@ -139,7 +183,10 @@ class LevenbergMarquardtIK:
         ])
 
     def clip_to_joint_limits(self, q):
-
+        """
+        @brief Clamp the three joint angles in place to this leg's configured joint limits.
+        @param q: Mutable array of the three joint angles (rad); modified in place.
+        """
         for i in range(3):
             q[i] = np.clip(
                 q[i],
@@ -148,7 +195,12 @@ class LevenbergMarquardtIK:
             )
 
     def calculate(self, goal, init_q=None):
-
+        """
+        @brief Solve inverse kinematics for a Cartesian foot target via Levenberg-Marquardt iteration.
+        @param goal: Target foot position [x, y, z] in the hip frame; only x and z are tracked.
+        @param init_q: Optional initial joint-angle guess (warm start); defaults to a nominal stance pose.
+        @return Dict mapping this leg's hip, thigh, and calf Joints to their solved angles (rad).
+        """
         if init_q is None:
             init_q = np.array([0.0, 0.9, -1.8])
 
@@ -205,7 +257,14 @@ class LevenbergMarquardtIK:
 # ── Test routine ───────────────────────────────────────────
 
 def test_ik_from_foot_positions(foot_positions):
+    """
+    @brief Run and report the IK solver against a set of reference foot positions.
 
+    For each leg, converts the target to the IK frame, solves IK from a per-leg initial guess,
+    recomputes forward kinematics, and prints the resulting joint angles and Cartesian error,
+    flagging whether each solution is within tolerance.
+    @param foot_positions: Mapping from each Foot to its target Cartesian position [x, y, z].
+    """
     print("\n================ IK FOOT POSITION TEST ================\n")
 
     for leg, target in foot_positions.items():

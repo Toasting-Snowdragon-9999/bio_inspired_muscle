@@ -50,7 +50,9 @@ ALL_PARAM_KEYS: list[str] = ["freq", "duty_factor"] + SHAPE_KEYS
 
 @dataclass
 class RewardWeights:
-    """Weights for the multi-component reward function.
+    """@brief Weights for the multi-component reward function.
+
+    Weights for the multi-component reward function.
 
     Default magnitudes encode the user-requested priority order
     ``gait >> velocity > CoT > stability``. The reward computation in
@@ -58,6 +60,15 @@ class RewardWeights:
     Phase 1 uses only ``w_gait``; Phase 2 adds ``w_vel``; Phase 3 enables
     every term below. Tune the weights without changing the priority order
     or the curriculum will lose its meaning.
+
+    @param w_gait: Primary weight on footfall-pattern matching (dominant term).
+    @param w_vel: Secondary weight on forward velocity.
+    @param w_cot: Tertiary weight on efficiency (Cost of Transport).
+    @param w_tilt: Quaternary weight on body tilt penalty (|roll| + |pitch|).
+    @param w_ang_vel: Weight on the base angular-velocity penalty (rad/s).
+    @param w_slip: Optional Phase 3 weight on stance-phase foot slipping.
+    @param w_clearance: Optional Phase 3 weight on swing-phase ground clearance.
+    @param w_fall: Hard-cliff penalty for falling / moving backwards / invalid CoT.
     """
     # ── Primary: footfall pattern matching ──
     # Dominant term — must be large enough that the optimiser can never
@@ -79,15 +90,27 @@ class RewardWeights:
 
 @dataclass
 class ParamBounds:
-    """Lower and upper bounds for each optimised shape parameter."""
+    """@brief Lower and upper bounds for each optimised shape parameter.
+
+    Lower and upper bounds for each optimised shape parameter.
+
+    @param low: Lower-bound array, shape (12,), one entry per SHAPE_KEYS key.
+    @param high: Upper-bound array, shape (12,), one entry per SHAPE_KEYS key.
+    """
     low: np.ndarray    # shape (12,)
     high: np.ndarray   # shape (12,)
 
 
 def default_params(gait: Gait) -> dict[str, float]:
     """
+    @brief Default parameter values for the given gait.
+
     Default parameter values for the given gait.
     Includes freq and duty_factor (unlike ai_fix_param which excluded duty_factor).
+
+    @param gait: Gait type whose hard-coded default parameter table to return.
+    @return Dict of all 14 parameter values (freq, duty_factor and the 12 shape
+        keys); falls back to the WALK defaults for an unknown gait.
     """
     # Gait-specific defaults — same reference values as ai_fix_param.py
     defaults = {
@@ -147,6 +170,8 @@ def make_bounds(
     initial_params: dict[str, float] | None = None,
 ) -> ParamBounds:
     """
+    @brief Build parameter bounds for the 12 ellipsoid shape keys only.
+
     Build parameter bounds for the 12 ellipsoid shape keys only.
 
     ``freq`` and ``duty_factor`` are **locked** (not optimised) so they
@@ -183,7 +208,13 @@ def make_bounds(
 
 
 def _dict_to_cfg(d: dict) -> EllipsoidConfig:
-    """Build an EllipsoidConfig from a param dict."""
+    """@brief Build an EllipsoidConfig from a param dict.
+
+    Build an EllipsoidConfig from a param dict.
+
+    @param d: Parameter dict containing every SHAPE_KEYS entry.
+    @return EllipsoidConfig populated from the 12 shape values in ``d``.
+    """
     return EllipsoidConfig(
         front_x_fore=d["front_x_fore"],
         front_x_hind=d["front_x_hind"],
@@ -202,6 +233,8 @@ def _dict_to_cfg(d: dict) -> EllipsoidConfig:
 
 class GaitParamEnv(gym.Env):
     """
+    @brief Gymnasium environment for gait parameter optimization via RL.
+
     Gymnasium environment for gait parameter optimization via RL.
 
     Each episode is a single headless simulation. The agent's action
@@ -231,6 +264,8 @@ class GaitParamEnv(gym.Env):
         curriculum_phase: int = 3,
     ):
         """
+        @brief Initialise the gait-parameter environment.
+
         Args:
             gait:             Gait pattern (WALK, TROT, CANTER, GALLOP, etc.)
             reward_weights:   Weights for multi-component reward (default: RewardWeights())
@@ -302,15 +337,28 @@ class GaitParamEnv(gym.Env):
         self.episode_count = 0
 
     def _denormalize(self, action: np.ndarray) -> np.ndarray:
-        """Map action from [-1, 1] to physical parameter ranges."""
+        """@brief Map action from [-1, 1] to physical parameter ranges.
+
+        Map action from [-1, 1] to physical parameter ranges.
+
+        @param action: Normalised 12D action vector in [-1, 1].
+        @return Physical shape-parameter array obtained by linearly mapping
+            each component into its ``[low, high]`` bound.
+        """
         # Linear mapping: param = low + (action + 1) / 2 * (high - low)
         return self.bounds.low + (action + 1.0) / 2.0 * (self.bounds.high - self.bounds.low)
 
     def _action_to_param_dict(self, action: np.ndarray) -> dict[str, float]:
-        """Convert a normalized 12D action vector to a full 14-key parameter dict.
+        """@brief Convert a normalized 12D action vector to a full 14-key parameter dict.
+
+        Convert a normalized 12D action vector to a full 14-key parameter dict.
 
         The 12D action maps to ``SHAPE_KEYS`` via the bounds; ``freq`` and
         ``duty_factor`` are injected from ``self._locked_params``.
+
+        @param action: Normalised 12D action vector in [-1, 1].
+        @return Full 14-key parameter dict (12 shape keys plus the locked
+            ``freq`` and ``duty_factor``).
         """
         raw = self._denormalize(action)
         param_dict = {key: float(raw[i]) for i, key in enumerate(SHAPE_KEYS)}
@@ -320,9 +368,15 @@ class GaitParamEnv(gym.Env):
 
     def _run_simulation(self, param_dict: dict[str, float]) -> dict:
         """
+        @brief Run one headless simulation with the given parameters.
+
         Run one headless simulation with the given parameters.
         Returns the extended metrics dict from headless_sim_extended().
         On any failure, returns a penalty dict.
+
+        @param param_dict: Full 14-key parameter dict describing the candidate gait.
+        @return Extended metrics dict from ``headless_sim_extended()`` on
+            success, or a worst-case penalty metrics dict on any failure.
         """
         freq = param_dict["freq"]
         duty_factor = param_dict["duty_factor"]
@@ -395,30 +449,68 @@ class GaitParamEnv(gym.Env):
     # to swap individual terms without touching the orchestrator.
     @staticmethod
     def _r_gait(m: dict, w: RewardWeights) -> float:
+        """@brief Footfall-pattern-matching reward term.
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``-w_gait * gait_error``.
+        """
         return -w.w_gait * float(m["gait_error"])
 
     @staticmethod
     def _r_vel(m: dict, w: RewardWeights) -> float:
+        """@brief Forward-velocity reward term.
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``w_vel * velocity``.
+        """
         return w.w_vel * float(m["velocity"])
 
     @staticmethod
     def _r_cot(m: dict, w: RewardWeights) -> float:
+        """@brief Cost-of-Transport (efficiency) reward term.
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``-w_cot * cot``.
+        """
         return -w.w_cot * float(m["cot"])
 
     @staticmethod
     def _r_stability(m: dict, w: RewardWeights) -> float:
+        """@brief Body-stability reward term (tilt + angular velocity).
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``-(w_tilt * avg_tilt + w_ang_vel * ang_vel)``.
+        """
         return -(w.w_tilt * float(m["avg_tilt"]) + w.w_ang_vel * float(m["ang_vel"]))
 
     @staticmethod
     def _r_slip(m: dict, w: RewardWeights) -> float:
+        """@brief Stance-phase foot-slip reward term (Phase 3 only).
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``-w_slip * slip``.
+        """
         return -w.w_slip * float(m["slip"])
 
     @staticmethod
     def _r_clearance(m: dict, w: RewardWeights) -> float:
+        """@brief Swing-phase ground-clearance reward term (Phase 3 only).
+
+        @param m: Metrics dict from the simulation.
+        @param w: Active reward weights.
+        @return Signed contribution ``-w_clearance * swing_clearance``.
+        """
         return -w.w_clearance * float(m["swing_clearance"])
 
     def _compute_reward(self, metrics: dict) -> float:
         """
+        @brief Multi-component reward function gated by ``self.curriculum_phase``.
+
         Multi-component reward function gated by ``self.curriculum_phase``.
 
         Priority order is enforced by both the default weights in
@@ -432,6 +524,10 @@ class GaitParamEnv(gym.Env):
         The hard cliffs below (``-w_fall`` on fall / backward / invalid CoT)
         always apply, regardless of phase, so the optimiser never gets a
         positive score for a catastrophic candidate.
+
+        @param metrics: Metrics dict from ``_run_simulation``.
+        @return Scalar reward: a phase-gated sum of the component terms, or a
+            hard-cliff penalty (with a small tiebreaker) for a failing candidate.
         """
         w = self.weights
 
@@ -484,7 +580,14 @@ class GaitParamEnv(gym.Env):
         return float(reward)
 
     def _metrics_to_obs(self, metrics: dict) -> np.ndarray:
-        """Convert metrics dict to observation array."""
+        """@brief Convert metrics dict to observation array.
+
+        Convert metrics dict to observation array.
+
+        @param metrics: Metrics dict from ``_run_simulation``.
+        @return Float32 observation array ``[cot, distance, velocity, avg_tilt,
+            survived]``; a missing CoT is substituted with 10.0.
+        """
         cot = metrics["cot"] if metrics["cot"] is not None else 10.0
         return np.array([
             cot,
@@ -496,7 +599,13 @@ class GaitParamEnv(gym.Env):
 
     def step(self, action: np.ndarray):
         """
+        @brief Run one simulation episode with the given action (normalized parameters).
+
         Run one simulation episode with the given action (normalized parameters).
+
+        @param action: Normalised 12D action vector in [-1, 1] (clipped to range).
+        @return Tuple ``(observation, reward, terminated, truncated, info)`` as
+            described below.
 
         Returns:
             observation: metrics from this episode
@@ -535,8 +644,15 @@ class GaitParamEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         """
+        @brief Reset the environment.
+
         Reset the environment. Returns zeros as initial observation
         since there's no meaningful state between episodes.
+
+        @param seed: Optional RNG seed forwarded to the Gymnasium base class.
+        @param options: Optional reset options (unused).
+        @return Tuple ``(observation, info)`` where observation is the last
+            episode's metrics (zeros on the very first reset) and info is empty.
         """
         super().reset(seed=seed)
         obs = self._last_metrics.copy()
@@ -544,6 +660,8 @@ class GaitParamEnv(gym.Env):
 
     def get_default_action(self) -> np.ndarray:
         """
+        @brief Return the 12D action corresponding to default shape parameters.
+
         Return the 12D action corresponding to default shape parameters.
 
         Only covers ``SHAPE_KEYS`` — ``freq`` and ``duty_factor`` are locked
@@ -553,6 +671,9 @@ class GaitParamEnv(gym.Env):
         used as the seed instead of ``default_params(gait)`` — that's what makes
         CMA-ES (which calls this for its ``x0``) start its search from the
         user's tuned ``.<GAIT>.ini``.
+
+        @return Float32 12D action vector that maps (via the bounds) to the
+            seed/default shape parameters.
         """
         ref = self.initial_params if self.initial_params is not None else default_params(self.gait)
         raw = np.array([ref[k] for k in SHAPE_KEYS])

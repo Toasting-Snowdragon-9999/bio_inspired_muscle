@@ -1,3 +1,14 @@
+"""@brief MuJoCo simulation wrapper for the quadruped-locomotion pipeline.
+
+Provides the :class:`MujocoSim` class, which loads a MuJoCo model, mirrors its
+sensor state into a :class:`RobotInterface`, drives a controller (CPG →
+trajectory → IK → adaptive-impedance PD), and applies the resulting joint
+targets back to the simulator. Supports both an interactive GLFW-rendered loop
+(:meth:`MujocoSim.sim`) and headless runs for parameter sweeps / RL training
+(:meth:`MujocoSim.headless_sim`, :meth:`MujocoSim.headless_sim_extended`), along
+with Cost-of-Transport (CoT) and gait-quality metrics. Also installs a stderr
+filter that suppresses harmless GLib warning spam.
+"""
 from pyexpat import model
 import os, sys
 import time
@@ -50,6 +61,7 @@ def _silence_glib_stderr():
     )
 
     def _pump():
+        """@brief Pump."""
         last_dropped = False
         with os.fdopen(read_fd, "rb") as pipe:
             for line in pipe:
@@ -72,7 +84,27 @@ _silence_glib_stderr()
 
 
 class MujocoSim:
+    """@brief Wraps a MuJoCo model + data and drives a locomotion controller.
+
+    Owns the MuJoCo ``MjModel``/``MjData`` pair, synchronises sensor state into a
+    :class:`RobotInterface`, applies controller outputs (either direct position
+    writes or torque commands with optional bias compensation), renders an
+    interactive GLFW view, and computes locomotion metrics (Cost of Transport
+    and per-step gait-quality terms).
+    """
     def __init__(self, model_path, robot_interface: RobotInterface, window_scale = 1.0, print_camera_config=0, render_hz: float = 60.0):
+        """@brief Construct the simulator, load the model, and initialise state.
+
+        @param model_path: Filesystem path to the MuJoCo model XML to load.
+        @param robot_interface: Shared :class:`RobotInterface` mirror that the
+               controller reads sensor state from and writes targets to.
+        @param window_scale: Multiplier applied to the 1920x1080 base window
+               size for the interactive GLFW view.
+        @param print_camera_config: When truthy, print the live camera
+               configuration each render frame (debugging aid).
+        @param render_hz: Target render frequency in Hz; lower this on slow
+               machines (e.g. 30.0).
+        """
         self.model = mj.MjModel.from_xml_path(model_path)
         self.data = mj.MjData(self.model)
         self.robot_interface = robot_interface
@@ -123,10 +155,20 @@ class MujocoSim:
 
     @property
     def starting_pos(self):
+        """@brief Return the stored base spawn position.
+
+        @return The last assigned starting state (base xyz position), or
+                ``None`` if never set.
+        """
         return self._starting_pos
 
     @starting_pos.setter
     def starting_pos(self, starting_state):
+        """@brief Set the base spawn position and write it into ``qpos``.
+
+        @param starting_state: Base xyz position to write into ``data.qpos[0:3]``
+               and remember as the stored starting state.
+        """
         self.data.qpos[0:3] = starting_state
         self._starting_pos = starting_state
 
@@ -176,17 +218,35 @@ class MujocoSim:
     #     print("===================================\n")
 
     def get_model_and_data(self):
+        """@brief Return the underlying MuJoCo model and data handles.
+
+        @return Tuple ``(model, data)`` of the ``MjModel`` and ``MjData``.
+        """
         return self.model, self.data
 
     def use_direct_control(self):
+        """@brief Switch the simulator to direct position control mode.
+
+        Sets the ``use_direct`` flag so subsequent steps write controller
+        targets straight into ``qpos`` instead of applying torque commands.
+        """
         self.use_direct = True
 
     def set_camera_follow(self, enabled: bool):
-        """Enable or disable camera following the robot."""
+        """Enable or disable camera following the robot.
+
+        @brief Enable or disable camera following the robot.
+        @param enabled: When True the camera tracks the robot base each frame.
+        """
         self.follow_robot = bool(enabled)
 
     def init_graphics(self):
-        """Initialize GLFW window and visualization structures."""
+        """Initialize GLFW window and visualization structures.
+
+        @brief Initialize GLFW window and visualization structures.
+        @return Tuple ``(window, cam, opt, scene, context)`` of the created GLFW
+                window and MuJoCo visualization objects.
+        """
         glfw.init()
         window = glfw.create_window(self.window_width, self.window_height, "MuJoCo Simulation", None, None)
         glfw.make_context_current(window)
@@ -214,7 +274,17 @@ class MujocoSim:
         return window, self.cam, opt, self.scene, context
 
     def simulation_step(self, window, model, data, opt, scene, cam, context):
-        """Perform one simulation step and render."""
+        """Perform one simulation step and render.
+
+        @brief Perform one simulation step and render.
+        @param window: GLFW window to render into and swap buffers for.
+        @param model: MuJoCo ``MjModel`` used to update the scene.
+        @param data: MuJoCo ``MjData`` providing the current state to render.
+        @param opt: ``MjvOption`` visualization options.
+        @param scene: ``MjvScene`` populated each frame from model/data.
+        @param cam: ``MjvCamera`` whose lookat tracks the base when following.
+        @param context: ``MjrContext`` rendering context.
+        """
         if self.follow_robot:
             base_pos = data.body("base_link").xpos
             cam.lookat[:] = base_pos
@@ -235,7 +305,9 @@ class MujocoSim:
     # ── Robot-interface synchronisation ──────────────────────────
 
     def _ensure_foot_geom_map(self) -> None:
-        """Lazily build geom-id → Foot map. Called once on first sync.
+        """@brief Lazily build the geom-id → Foot map used for contact detection.
+
+        Lazily build geom-id → Foot map. Called once on first sync.
 
         Walks every geom in the model, looks up its parent body, and if that
         body's name matches one of the `Foot` enum values (e.g. 'FL_foot'),
@@ -252,7 +324,10 @@ class MujocoSim:
                 self._foot_geom_to_foot[geom_id] = body_to_foot[body_name]
 
     def _sync_robot_interface(self):
-        """Copy MuJoCo sensor data → RobotInterface so controllers see fresh state."""
+        """Copy MuJoCo sensor data → RobotInterface so controllers see fresh state.
+
+        @brief Copy MuJoCo sensor data → RobotInterface so controllers see fresh state.
+        """
         ri = self.robot_interface
         ri.dt = self.model.opt.timestep
 
@@ -315,7 +390,10 @@ class MujocoSim:
         ri.contact = contact_state
 
     def _apply_controller_targets_directly(self):
-        """Write RobotInterface.target_positions → data.ctrl (position actuators)."""
+        """Write RobotInterface.target_positions → data.ctrl (position actuators).
+
+        @brief Write RobotInterface.target_positions → data.ctrl (position actuators).
+        """
         targets = self.robot_interface.target_positions
         # current_joint_pos = self.robot_interface.joint_positions
         for joint, target_angle in targets.items():
@@ -334,6 +412,8 @@ class MujocoSim:
     def _apply_controller_targets_torque(self):
         """
         Apply torque commands from RobotInterface to MuJoCo actuators.
+
+        @brief Apply torque commands from RobotInterface to MuJoCo actuators.
         """
 
         torques = self.robot_interface.target_torques
@@ -367,10 +447,18 @@ class MujocoSim:
             self.data.ctrl[actuator_idx] = tau
 
     def set_bias_compensation(self, enabled: bool = True):
+        """@brief Enable or disable gravity/Coriolis bias compensation in torque mode.
+
+        @param enabled: When True, ``qfrc_bias`` is added to controller torques
+               before clipping to actuator limits.
+        """
         self.use_bias_compensation = bool(enabled)
 
     def reset(self):
-        """Reset any internal state in the MujocoSim instance (e.g. for a new sim run)."""
+        """Reset any internal state in the MujocoSim instance (e.g. for a new sim run).
+
+        @brief Reset any internal state in the MujocoSim instance (e.g. for a new sim run).
+        """
         self._energy = 0.0
         if self.controller is not None and hasattr(self.controller, 'reset'):
             self.controller.reset()
@@ -378,14 +466,20 @@ class MujocoSim:
         self.starting_pos = self._starting_pos
         self.next_cot_print_time = self.sim_length if self.sim_length > 0 else None
 
-    def reset_cot(self):    
-        """Reset CoT tracking state (energy accumulator and start position)."""
+    def reset_cot(self):
+        """Reset CoT tracking state (energy accumulator and start position).
+
+        @brief Reset CoT tracking state (energy accumulator and start position).
+        """
         self._energy = 0.0
         self._start_x = self.data.qpos[0]
         self._start_y = self.data.qpos[1]
     
     def _save_data(self):
-        """Save relevant data from the current timestep into the RobotInterface's data buffer."""
+        """Save relevant data from the current timestep into the RobotInterface's data buffer.
+
+        @brief Save relevant data from the current timestep into the RobotInterface's data buffer.
+        """
         if self.robot_interface.data_list is None:
             self.robot_interface.data_list = deque(maxlen=int(10 / self.robot_interface.dt))
 
@@ -434,6 +528,13 @@ class MujocoSim:
             warmup: Sim-seconds before energy/distance tracking begins.
                     Lets the robot settle from the initial drop so CoT
                     is not polluted by the transient.  Default 2.0 s.
+
+        @brief Main simulation loop (frame-rate independent, deterministic physics).
+        @param controller: Object with a `run()` method; its outputs are applied
+               each control callback. ``None`` runs physics with no controller.
+        @param sim_length: Duration in seconds (negative = infinite).
+        @param slow_factor: >1.0 = slow motion (visual only).
+        @param warmup: Sim-seconds before energy/distance tracking begins.
         """
         window, cam, opt, scene, context = self.init_graphics()
 
@@ -456,6 +557,11 @@ class MujocoSim:
 
         # --- Control callback ---
         def _control_callback(model, data):
+            """
+            @brief Control callback.
+            @param model:
+            @param data:
+            """
             try:
                 self._sync_robot_interface()
                 controller.run()
@@ -594,6 +700,11 @@ class MujocoSim:
 
         # Build control callback: sync sensors → controller → apply torques
         def _control_callback(model, data):
+            """
+            @brief Control callback.
+            @param model:
+            @param data:
+            """
             self._sync_robot_interface()
             controller.run()
             if self.use_direct:
@@ -682,6 +793,11 @@ class MujocoSim:
         _callback_exc: list[BaseException] = []
 
         def _control_callback(model, data):
+            """
+            @brief Control callback.
+            @param model:
+            @param data:
+            """
             if _callback_exc:
                 # Already failing this episode — short-circuit so we don't
                 # spam tracebacks for every remaining step before the outer
@@ -831,6 +947,14 @@ class MujocoSim:
 
     def keyboard(self, window, key, scancode, act, mods):
         # Handle built-in keyboard commands
+        """
+        @brief Keyboard.
+        @param window:
+        @param key:
+        @param scancode:
+        @param act:
+        @param mods:
+        """
         if act == glfw.PRESS and key == glfw.KEY_BACKSPACE:
             mj.mj_resetData(self.model, self.data)
             mj.mj_forward(self.model, self.data)
@@ -842,6 +966,13 @@ class MujocoSim:
 
     def mouse_button(self, window, button, act, mods):
         # update button state
+        """
+        @brief Mouse button.
+        @param window:
+        @param button:
+        @param act:
+        @param mods:
+        """
         self.button_left = (glfw.get_mouse_button(
             window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS)
         self.button_middle = (glfw.get_mouse_button(
@@ -854,6 +985,12 @@ class MujocoSim:
 
     def mouse_move(self, window, xpos, ypos):
         # compute mouse displacement, save
+        """
+        @brief Mouse move.
+        @param window:
+        @param xpos:
+        @param ypos:
+        """
         dx = xpos - self.lastx
         dy = ypos - self.lasty
         self.lastx = xpos
@@ -891,14 +1028,25 @@ class MujocoSim:
                         dy/height, self.scene, self.cam)
 
     def scroll(self, window, xoffset, yoffset):
+        """
+        @brief Scroll.
+        @param window:
+        @param xoffset:
+        @param yoffset:
+        """
         action = mj.mjtMouse.mjMOUSE_ZOOM
         mj.mjv_moveCamera(self.model, action, 0.0, -0.05 *
                         yoffset, self.scene, self.cam)
 
     def remove_gravity(self):
+        """@brief Remove gravity."""
         self.model.opt.gravity[:] = [0.0, 0.0, 0.0]
 
     def enable_air_mode(self, height=1.0):
+        """
+        @brief Enable air mode.
+        @param height:
+        """
         if not self.dispense_in_air:
             self.height = height
             self.dispense_in_air = True

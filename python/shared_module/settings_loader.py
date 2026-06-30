@@ -1,3 +1,4 @@
+"""@brief settings_loader.py — settings loader."""
 from configparser import ConfigParser
 import os
 import sys

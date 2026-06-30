@@ -1,9 +1,11 @@
+"""@brief pd_vs_oiac.py — pd vs oiac."""
 import numpy as np
 import matplotlib.pyplot as plt
 from enum import Enum
 
 
 class Terrain(Enum):
+    """@brief Terrain — terrain."""
     flat = "Flat"
     tiny_hills = "Tiny Hills"
     rough = "Rough"
@@ -29,6 +31,11 @@ CONTROLLER_LABELS = {
 
 
 def build_controller_plot(controller_data: dict[str, dict[Terrain, list[float]]]):
+    """
+    @brief Build controller plot.
+    @param controller_data:
+    @return
+    """
     base_size = 25
     plt.rcParams.update({
         'font.size': base_size,        # Default text size
@@ -86,6 +93,10 @@ def build_controller_plot(controller_data: dict[str, dict[Terrain, list[float]]]
 
 
 def print_controller_averages(controller_data: dict[str, dict[Terrain, list[float]]]):
+    """
+    @brief Print controller averages.
+    @param controller_data:
+    """
     print("Controller averages by terrain:")
 
     for terrain in TERRAIN_ORDER:
@@ -130,6 +141,7 @@ def print_controller_averages(controller_data: dict[str, dict[Terrain, list[floa
 
 
 def main():
+    """@brief Main."""
     pd_cot = {
         Terrain.flat: [0.48125590050716327, 0.47556584118156525, 0.4741051662290456, 0.4750328575764136, 0.47727691043471976, 0.48306199177048653, 0.4737251233852111, 0.475580966444446, 0.4749471705002178, 0.4792013789747379, 0.4768800000621347, 0.4742641831171115, 0.4726409869314624, 0.4753501511685849, 0.4778191065193795, 0.4727681576258399, 0.4713421345770673, 0.47026690986734365, 0.47059692497006017, 0.48959665485987414],
         Terrain.tiny_hills: [0.59930128502777, 0.4749579021421264, 0.6645138453439858, 0.5637486480626087, 0.5194834970457627, 0.4673477066587407, 0.4890287138720125, 0.49924999698728184, 0.5661916054441647, 0.5983380768085418, 0.5685737297547737, 0.6083089440680396, 0.5142833940320557, 0.6667914281791171, 0.6376104844059823, 0.5608631289557834, 0.5281140402083898, 0.6128765691242455, 0.583181710954019, 0.5502715017860522],

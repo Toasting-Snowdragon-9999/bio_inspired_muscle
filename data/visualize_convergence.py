@@ -33,7 +33,13 @@ METRIC_COLS = {"trial", "reward", "cot", "distance", "velocity", "avg_tilt", "su
 
 
 def _load_csv(path: Path) -> dict[str, np.ndarray]:
-    """Load a CSV into {column_name: float64 array}. Empty cells become NaN."""
+    """@brief Load a CSV into {column_name: float64 array}. Empty cells become NaN.
+
+    Load a CSV into {column_name: float64 array}. Empty cells become NaN.
+
+    @param path: Path to the CSV file to load.
+    @return A dict mapping each column name to its float64 numpy array.
+    """
     # genfromtxt handles missing values cleanly (the CSVs leave `cot` blank
     # when the trial died and divisions blew up). `ndmin=1` keeps single-row
     # files from collapsing into 0-d records.
@@ -45,12 +51,24 @@ _GAIT_RE = re.compile(r"rl_results_cma_([A-Z]+)_")
 
 
 def _gait_label(path: Path) -> str:
+    """@brief Extract the gait name (e.g. "WALK") from a result CSV filename.
+
+    @param path: Path to a result CSV file.
+    @return The matched gait label, or the file stem if no gait is found.
+    """
     m = _GAIT_RE.search(path.name)
     return m.group(1) if m else path.stem
 
 
 def _best_so_far_index(reward: np.ndarray) -> np.ndarray:
-    """Return, for each row, the index of the highest finite reward seen so far."""
+    """@brief Return, for each row, the index of the highest finite reward seen so far.
+
+    Return, for each row, the index of the highest finite reward seen so far.
+
+    @param reward: Array of per-trial reward values (may contain NaN/inf).
+    @return An integer array where entry i is the index of the best reward
+        observed in rows 0..i (used to draw the best-so-far convergence line).
+    """
     out = np.zeros(len(reward), dtype=int)
     best_val = -np.inf
     best_idx = 0
@@ -63,13 +81,25 @@ def _best_so_far_index(reward: np.ndarray) -> np.ndarray:
 
 
 def _grid(n: int) -> tuple[int, int]:
+    """@brief Choose a (rows, cols) subplot grid that fits n panels.
+
+    @param n: Number of subplots to lay out.
+    @return A (rows, cols) tuple for the subplot grid.
+    """
     cols = 4 if n > 6 else min(n, 3)
     rows = (n + cols - 1) // cols
     return rows, cols
 
 
 def plot_single(csv_path: Path, save_dir: Path | None, show: bool) -> None:
-    """One figure for one CSV: scatter of trials + best-so-far convergence line."""
+    """@brief One figure for one CSV: scatter of trials + best-so-far convergence line.
+
+    One figure for one CSV: scatter of trials + best-so-far convergence line.
+
+    @param csv_path: Path to the result CSV to plot.
+    @param save_dir: Directory to save the PNG to, or None to skip saving.
+    @param show: Whether to open an interactive window.
+    """
     df = _load_csv(csv_path)
     param_cols = [c for c in df if c not in METRIC_COLS]
     if not param_cols or "trial" not in df or "reward" not in df:
@@ -111,7 +141,15 @@ def plot_single(csv_path: Path, save_dir: Path | None, show: bool) -> None:
 
 
 def plot_group(gait: str, paths: list[Path], save_dir: Path | None, show: bool) -> None:
-    """One figure per gait, overlaying best-so-far curves from every run."""
+    """@brief One figure per gait, overlaying best-so-far curves from every run.
+
+    One figure per gait, overlaying best-so-far curves from every run.
+
+    @param gait: The gait label these runs belong to (used in the title).
+    @param paths: Result CSV files for this gait to overlay.
+    @param save_dir: Directory to save the PNG to, or None to skip saving.
+    @param show: Whether to open an interactive window.
+    """
     frames = [(p, _load_csv(p)) for p in paths]
     # Use the first frame's parameter columns as the canonical set.
     param_cols = [c for c in frames[0][1] if c not in METRIC_COLS]
@@ -164,6 +202,7 @@ def plot_group(gait: str, paths: list[Path], save_dir: Path | None, show: bool) 
 
 
 def main() -> None:
+    """@brief Parse CLI arguments and render convergence plots per file or per gait."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("files", nargs="*", type=Path,
                         help="CSV files (default: all rl_results_*.csv next to this script).")

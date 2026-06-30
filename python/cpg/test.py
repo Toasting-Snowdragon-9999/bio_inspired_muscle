@@ -1,3 +1,4 @@
+"""@brief test.py — test."""
 import sys, os
 import numpy as np 
 import matplotlib.pyplot as plt
@@ -39,6 +40,12 @@ def apply_duty_factor(phase: float, duty: float) -> float:
 
 def test_cpg_output(gait=None, freq=None, duty=None):
 
+    """
+    @brief Test cpg output.
+    @param gait:
+    @param freq:
+    @param duty:
+    """
     robot_interface = RobotInterface(starting_state=State(gait=gait, mode=Mode.MOVING, frequency=freq))
     robot_interface.dt = 0.001
     cpg = KuramotoCpg(robot_interface)
@@ -105,6 +112,13 @@ def test_gait_transtion():
 
     def interp_angle(a, b, s):
 
+        """
+        @brief Interp angle.
+        @param a:
+        @param b:
+        @param s:
+        @return
+        """
         delta = (b - a + np.pi) % (2*np.pi) - np.pi
 
         return a + s * delta
@@ -159,6 +173,7 @@ def test_gait_transtion():
 
 
 def test_duty_factor():
+    """@brief Test duty factor."""
     robot_interface = RobotInterface(
         starting_state=State(
             gait=Gait.TROT,
@@ -207,6 +222,12 @@ def test_duty_factor():
 
 def test_trajectory_builder(gait=None, freq_in=None, duty_in=None):
 
+    """
+    @brief Test trajectory builder.
+    @param gait:
+    @param freq_in:
+    @param duty_in:
+    """
     if gait is None:
         raise ValueError("Gait cannot be None")
     conf, freq, duty = load_settings_from_file(gait)
@@ -255,6 +276,7 @@ def test_trajectory_builder(gait=None, freq_in=None, duty_in=None):
     plt.show()
 
 def test_3d():
+    """@brief Test 3d."""
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
 
@@ -306,6 +328,7 @@ def test_3d():
     plt.show()
 
 def test_3d_direction():
+    """@brief Test 3d direction."""
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
 
@@ -381,6 +404,7 @@ def test_3d_direction():
     plt.show()
 
 def test_phase_space():
+    """@brief Test phase space."""
     import matplotlib.pyplot as plt
     import numpy as np
 
@@ -441,6 +465,7 @@ def test_phase_space():
     plt.show()
 
 def generate_foot_traj_for_IK():
+    """@brief Generate foot traj for ik."""
     robot_interface = RobotInterface(
         starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=0.5)
     )
@@ -465,6 +490,11 @@ def generate_foot_traj_for_IK():
     pretty_print_foot_positions("Foot position 0", foot_trajectories[steps // 10])
     
 def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinate]):
+    """
+    @brief Pretty print foot positions.
+    @param title:
+    @param foot_positions:
+    """
     print(f"\n{title}")
     print("-" * 40)
 
@@ -480,6 +510,7 @@ def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinat
     print("-" * 40)
 
 def test_foot_positions():
+    """@brief Test foot positions."""
     builder = TrajectoryBuilder()
     foot_targets = {
         Foot.FL: Coordinate(-0.018626816173289977, 0.14199272947995584, 0.271932972842175),
@@ -597,6 +628,7 @@ def test_ellipsoid_traj():
     plt.show()
 
 def plot_single_gait_footfall():
+    """@brief Plot single gait footfall."""
     gait = Gait.AMBLE
     feet_order = [Foot.FL, Foot.FR, Foot.RR, Foot.RL]
     duty_factor = 0.40  
@@ -660,6 +692,7 @@ def plot_single_gait_footfall():
 
 
 def test_main():
+    """@brief Test main."""
     print("==================================================")
     print("Testing footfall pattern")
     #plot_single_gait_footfall()

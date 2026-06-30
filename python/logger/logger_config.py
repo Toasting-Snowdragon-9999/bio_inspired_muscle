@@ -1,3 +1,5 @@
+"""@brief Shared logger configuration: extends sys.path so the package is importable and
+exposes a single pre-configured module-level Logger instance for the project."""
 
 import os
 import sys

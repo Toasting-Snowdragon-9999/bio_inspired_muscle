@@ -1,3 +1,12 @@
+"""
+@brief Foot-trajectory generation from CPG phases for a quadruped.
+
+Maps Kuramoto CPG oscillator phases to Cartesian foot targets and velocities.
+Provides the ellipsoid trajectory shape (EllipsoidConfig / TrajectoryBuilder),
+the duty-factor stance/swing split (GaitScheduler), and CPG blending toward the
+default standing pose.
+"""
+
 from enum import auto
 import os, sys
 from dataclasses import asdict, dataclass
@@ -11,11 +20,24 @@ from shared_module.robot_state import RobotInterface, Hip, Foot, TrajectoryMetho
 
 @dataclass
 class Coordinate:
+    """
+    @brief Cartesian (x, y, z) coordinate or vector.
+
+    @param x: X component (forward / back, metres).
+    @param y: Y component (lateral, metres).
+    @param z: Z component (height, metres).
+    """
     x: float
     y: float
     z: float
 
 class OvalOffset(Enum):
+    """
+    @brief Named offset keys for tuning the oval foot trajectory.
+
+    Identifies the per-region x and z offsets (fore/rear and top/bottom) used
+    to shape the oval trajectory for front and rear legs.
+    """
     X_FFORE = auto()
     X_RFORE = auto()
     X_FHIND = auto()
@@ -64,22 +86,49 @@ class EllipsoidConfig:
     rear_skew:     float = 0.0
 
     def keys(self):
+        """
+        @brief Keys.
+        @return
+        """
         return asdict(self).keys()
 
     def values(self):
+        """
+        @brief Values.
+        @return
+        """
         return asdict(self).values()
 
     def items(self):
+        """
+        @brief Items.
+        @return
+        """
         return asdict(self).items()
 
     def __getitem__(self, key):
+        """
+        @brief Getitem.
+        @param key:
+        @return
+        """
         return getattr(self, key)
 
 class GaitScheduler:
+    """@brief GaitScheduler — gait scheduler."""
     def __init__(self, robot_interface):
+        """
+        @brief Construct a GaitScheduler instance.
+        @param robot_interface:
+        """
         self.robot_interface = robot_interface
 
     def compute(self, phases):
+        """
+        @brief Compute.
+        @param phases:
+        @return
+        """
         duty = self.robot_interface.duty_factor
         contact = {}
         phase_norm = {}
@@ -93,6 +142,7 @@ class GaitScheduler:
         return phase_norm, contact
 
 class TrajectoryBuilder:
+    """@brief TrajectoryBuilder — trajectory builder."""
     def __init__(
         self,
         robot_interface: RobotInterface,
@@ -168,6 +218,12 @@ class TrajectoryBuilder:
         return gait_phi * 2 * np.pi
 
     def compute_target_velocities(self, neuron_phases: np.ndarray, neuron_phase_velocities: np.ndarray) -> dict[Foot, Coordinate]:
+        """
+        @brief Compute target velocities.
+        @param neuron_phases:
+        @param neuron_phase_velocities:
+        @return
+        """
         foot_velocities = {}
         for neuron_idx, foot in NEURON_TO_FOOT_DICT.items():
 
@@ -193,6 +249,11 @@ class TrajectoryBuilder:
         
 
     def transform_world_to_hip(self, target_world_foot_pos: dict[Foot, Coordinate]) -> dict[Foot, Coordinate]:
+        """
+        @brief Transform world to hip.
+        @param target_world_foot_pos:
+        @return
+        """
         foot_positions_hip = {}
 
         for foot, pos in target_world_foot_pos.items():

@@ -1,3 +1,11 @@
+"""@brief Reusable matplotlib helpers for plotting time-series data.
+
+Provides ``TimeSeriesPlotter`` (one subplot per data series) and
+``MultiSeriesPlotter`` (multiple series overlaid on a shared subplot grid)
+for visualizing simulation/analysis signals such as neuron activations and
+internal states over time.
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
@@ -6,6 +14,8 @@ from typing import Dict, Optional, Tuple, Union
 
 class TimeSeriesPlotter:
     """
+    @brief A flexible plotting class for time series data.
+
     A flexible plotting class for time series data.
     
     Usage:
@@ -25,12 +35,18 @@ class TimeSeriesPlotter:
         subplot_height: float = 3.0
     ):
         """
+        @brief Initialize the plotter.
+
         Initialize the plotter.
-        
+
         Args:
             time: Time array for x-axis
             figsize: Base figure size (width, height_per_subplot)
             subplot_height: Height of each subplot in inches
+
+        @param time: Time array for x-axis.
+        @param figsize: Base figure size (width, height_per_subplot).
+        @param subplot_height: Height of each subplot in inches.
         """
         self.time = time
         self.base_width = figsize[0]
@@ -50,8 +66,10 @@ class TimeSeriesPlotter:
         grid_alpha: float = 0.3
     ):
         """
+        @brief Plot each data series on its own subplot.
+
         Plot each data series on its own subplot.
-        
+
         Args:
             data_dict: Dictionary of {name: data_array} pairs
             ylabel: Y-axis label for all subplots
@@ -61,6 +79,16 @@ class TimeSeriesPlotter:
             linewidth: Line width for plots
             grid: Whether to show grid
             grid_alpha: Grid transparency
+
+        @param data_dict: Dictionary of {name: data_array} pairs.
+        @param ylabel: Y-axis label for all subplots.
+        @param xlabel: X-axis label for bottom subplot.
+        @param title_prefix: Optional prefix for subplot titles.
+        @param colors: List of colors (default uses matplotlib color cycle).
+        @param linewidth: Line width for plots.
+        @param grid: Whether to show grid.
+        @param grid_alpha: Grid transparency.
+        @return A (figure, axes) tuple for the created plot.
         """
         n_plots = len(data_dict)
         
@@ -113,7 +141,10 @@ class TimeSeriesPlotter:
         return self.fig, self.axes
     
     def show(self):
-        """Display the plot."""
+        """@brief Display the plot.
+
+        Display the plot.
+        """
         if self.fig is None:
             raise RuntimeError("Must call plot() before show()")
         plt.show()
@@ -125,12 +156,18 @@ class TimeSeriesPlotter:
         bbox_inches: str = 'tight'
     ):
         """
+        @brief Save the plot to file.
+
         Save the plot to file.
-        
+
         Args:
             filepath: Output file path
             dpi: Resolution
             bbox_inches: Bounding box setting
+
+        @param filepath: Output file path.
+        @param dpi: Resolution.
+        @param bbox_inches: Bounding box setting.
         """
         if self.fig is None:
             raise RuntimeError("Must call plot() before save()")
@@ -142,13 +179,18 @@ class TimeSeriesPlotter:
         print(f"Saved plot to {filepath}")
     
     def close(self):
-        """Close the figure."""
+        """@brief Close the figure.
+
+        Close the figure.
+        """
         if self.fig is not None:
             plt.close(self.fig)
 
 
 class MultiSeriesPlotter:
     """
+    @brief Plot multiple data series on the same subplot grid.
+
     Plot multiple data series on the same subplot grid.
     
     Usage:
@@ -168,13 +210,20 @@ class MultiSeriesPlotter:
         subplot_titles: Optional[list] = None
     ):
         """
+        @brief Initialize the multi-series plotter.
+
         Initialize the multi-series plotter.
-        
+
         Args:
             time: Time array for x-axis
             n_subplots: Number of subplots
             figsize: Figure size (width, height)
             subplot_titles: List of titles for each subplot
+
+        @param time: Time array for x-axis.
+        @param n_subplots: Number of subplots.
+        @param figsize: Figure size (width, height).
+        @param subplot_titles: List of titles for each subplot.
         """
         self.time = time
         self.n_subplots = n_subplots
@@ -205,8 +254,10 @@ class MultiSeriesPlotter:
         **kwargs
     ):
         """
+        @brief Add a data series to a specific subplot.
+
         Add a data series to a specific subplot.
-        
+
         Args:
             subplot_idx: Index of subplot (0-based)
             label: Label for the data series
@@ -214,6 +265,13 @@ class MultiSeriesPlotter:
             color: Line color
             linewidth: Line width
             **kwargs: Additional arguments passed to plot()
+
+        @param subplot_idx: Index of subplot (0-based).
+        @param label: Label for the data series.
+        @param data: Data array to plot.
+        @param color: Line color.
+        @param linewidth: Line width.
+        @param kwargs: Additional arguments passed to plot().
         """
         if subplot_idx >= self.n_subplots:
             raise ValueError(f"subplot_idx {subplot_idx} out of range (max: {self.n_subplots-1})")
@@ -236,14 +294,22 @@ class MultiSeriesPlotter:
         legend_ncol: int = 1
     ):
         """
+        @brief Finalize the plot with labels, legends, and grid.
+
         Finalize the plot with labels, legends, and grid.
-        
+
         Args:
             ylabel: Y-axis label for all subplots
             xlabel: X-axis label for bottom subplot
             grid: Whether to show grid
             grid_alpha: Grid transparency
             legend_ncol: Number of columns in legend
+
+        @param ylabel: Y-axis label for all subplots.
+        @param xlabel: X-axis label for bottom subplot.
+        @param grid: Whether to show grid.
+        @param grid_alpha: Grid transparency.
+        @param legend_ncol: Number of columns in legend.
         """
         for ax in self.axes:
             ax.set_ylabel(ylabel)
@@ -255,22 +321,35 @@ class MultiSeriesPlotter:
         plt.tight_layout()
     
     def show(self):
-        """Display the plot."""
+        """@brief Display the plot.
+
+        Display the plot.
+        """
         plt.show()
-    
+
     def save(
         self,
         filepath: Union[str, Path],
         dpi: int = 150,
         bbox_inches: str = 'tight'
     ):
-        """Save the plot to file."""
+        """@brief Save the plot to file.
+
+        Save the plot to file.
+
+        @param filepath: Output file path.
+        @param dpi: Resolution.
+        @param bbox_inches: Bounding box setting.
+        """
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        
+
         self.fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches)
         print(f"Saved plot to {filepath}")
-    
+
     def close(self):
-        """Close the figure."""
+        """@brief Close the figure.
+
+        Close the figure.
+        """
         plt.close(self.fig)

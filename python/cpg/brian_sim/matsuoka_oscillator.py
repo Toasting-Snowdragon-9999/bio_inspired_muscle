@@ -1,3 +1,4 @@
+"""@brief Brian2 spiking-style simulation of a four-neuron Matsuoka CPG, with oscillation analysis utilities."""
 import brian2 as b2
 from brian2 import (
     second, ms, 
@@ -8,7 +9,11 @@ from scipy.signal import find_peaks
 from scipy.fft import fft, fftfreq
 
 class MatsuokaCPGsim:
+    """@brief Brian2-backed four-neuron Matsuoka CPG simulation with mutual inhibition and state monitoring."""
     def __init__(self, dt=0.001):
+        """@brief Build the Brian2 neuron group, coupling, network operation, and monitors for the Matsuoka CPG.
+        @param dt: integration timestep in seconds (converted to a Brian2 quantity).
+        """
         self.dt = dt * second
 
         eqs = '''
@@ -62,6 +67,7 @@ class MatsuokaCPGsim:
 
         @network_operation(dt=self.dt) 
         def update_inhibition(): 
+            """@brief Brian2 network operation: recompute each neuron's inhibitory input each timestep."""
             # Matrix multiply: I_inh[i] = Σ_j a[i,j] * y[j]
             # self.neurons.I_inh = (
             #     np.dot(self.inhibitory_connection, self.neurons.y)
@@ -79,15 +85,23 @@ class MatsuokaCPGsim:
         self.net.store('initial')
 
     def reset(self):
+        """@brief Restore the network to its stored initial state."""
         self.net.restore('initial')
 
     def check_single_neuron_behavior(self) -> bool:
+        """@brief Check the stability condition guaranteeing a single neuron does not self-oscillate.
+        @return True if (T + tau)^2 >= 4·T·tau·b (single neuron stable / non-oscillating), else False.
+        """
         T = float(self.neurons.T[0] / second)  # Convert to dimensionless
         tau = float(self.neurons.tau[0])
         b = float(self.neurons.b[0])
         return bool((T + tau)**2 >= (4 * T * tau * b))
 
     def run(self, duration):
+        """@brief Run the Matsuoka CPG simulation and return monitored time series for each neuron.
+        @param duration: simulation length in seconds.
+        @return dict with 'time' plus per-neuron internal state, fatigue, and output arrays.
+        """
 
         single_neuron_check = self.check_single_neuron_behavior()
         if single_neuron_check:
@@ -107,6 +121,11 @@ class MatsuokaCPGsim:
 
     def analyze_oscillations(self, results, neuron_idx=0, skip_initial_seconds=10.0):
         """
+        @brief Analyze a neuron's output oscillation: peak-based cycle frequency and FFT spectral frequency.
+        @param results: results dict returned by run().
+        @param neuron_idx: zero-based index of the neuron to analyze.
+        @param skip_initial_seconds: leading transient duration (seconds) to discard before analysis.
+        @return dict of oscillation metrics (cycle/spectral frequency, period stats, peaks); NaN-filled if too few peaks.
         Analyze oscillation characteristics of a neuron's output.
 
         Returns both:
@@ -188,6 +207,9 @@ class MatsuokaCPGsim:
 
     def print_analysis(self, results, skip_initial_seconds=10.0):
         """
+        @brief Print the oscillation analysis (cycle and spectral frequencies) for every neuron.
+        @param results: results dict returned by run().
+        @param skip_initial_seconds: leading transient duration (seconds) to discard before analysis.
         Print oscillation analysis for both neurons.
 
         Clearly distinguishes:

@@ -1,3 +1,11 @@
+"""@brief Generate a multi-octave Perlin-noise terrain height map.
+
+Builds fractal Perlin noise (configurable size, octaves, persistence,
+lacunarity, and scale), normalizes it to an 8-bit image, applies a light
+Gaussian blur, and saves it as a grayscale PNG for use as a Go2 simulation
+height field.
+"""
+
 import cv2
 import numpy as np
 
@@ -16,13 +24,32 @@ OUTPUT = "python/sim/go2/huge_perlin_map.png"
 # Perlin noise implementation
 # ---------------------------------------------------
 def fade(t):
+    """@brief Perlin fade (smoothstep) easing curve 6t^5 - 15t^4 + 10t^3.
+
+    @param t: Fractional coordinate(s) in [0, 1].
+    @return The eased value(s) for smooth interpolation.
+    """
     return 6*t**5 - 15*t**4 + 10*t**3
 
 def lerp(a, b, t):
+    """@brief Linear interpolation between a and b by factor t.
+
+    @param a: Start value (returned when t == 0).
+    @param b: End value (returned when t == 1).
+    @param t: Interpolation factor.
+    @return The interpolated value a + t * (b - a).
+    """
     # Linear interpolation
     return a + t * (b - a)
 
 def gradient(h, x, y):
+    """@brief Compute the Perlin gradient dot product for hashed corner directions.
+
+    @param h: Hash values selecting one of 8 gradient vectors per cell.
+    @param x: X offsets from the grid corner.
+    @param y: Y offsets from the grid corner.
+    @return The dot product of the selected gradient vectors with (x, y).
+    """
     vectors = np.array([
         [1,1], [-1,1], [1,-1], [-1,-1],
         [1,0], [-1,0], [0,1], [0,-1]
