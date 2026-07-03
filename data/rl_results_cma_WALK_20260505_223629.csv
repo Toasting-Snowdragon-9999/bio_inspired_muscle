@@ -1,0 +1,2 @@
+trial,reward,cot,distance,velocity,avg_tilt,survived,freq,duty_factor,front_x_fore,front_x_hind,front_z_top,front_z_bottom,front_rotation,front_skew,rear_x_fore,rear_x_hind,rear_z_top,rear_z_bottom,rear_rotation,rear_skew
+1,-10.000000,,-0.784362,-0.156872,0.258238,1.000000,1.216168,0.494697,0.152758,0.091258,0.085627,0.021829,0.049443,0.018180,0.055862,0.148655,0.099738,0.026406,-0.046268,-0.004027

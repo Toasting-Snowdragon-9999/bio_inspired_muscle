@@ -1,0 +1,56 @@
+# Doxyfile for bio_inspired_muscle
+# Generate API documentation for the Python control stack and the C++ scaffolding.
+#
+# Usage:
+#   doxygen Doxyfile
+# Output:
+#   Docs/doxygen/html/index.html
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "bio_inspired_muscle"
+PROJECT_BRIEF          = "Bio-inspired muscle control for quadruped locomotion (Unitree Go2, MuJoCo)"
+OUTPUT_DIRECTORY       = Docs/doxygen
+CREATE_SUBDIRS         = NO
+
+#---------------------------------------------------------------------------
+# Build / extraction
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+RECURSIVE              = YES
+QUIET                  = NO
+WARN_IF_UNDOCUMENTED   = NO
+
+#---------------------------------------------------------------------------
+# Python support
+#---------------------------------------------------------------------------
+# Treat Python docstrings as documentation and parse the @brief/@param/@return
+# Doxygen commands embedded in them.
+OPTIMIZE_OUTPUT_JAVA   = YES
+PYTHON_DOCSTRING       = YES
+JAVADOC_AUTOBRIEF      = YES
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+INPUT                  = python cpp README.md
+USE_MDFILE_AS_MAINPAGE = README.md
+FILE_PATTERNS          = *.py *.cpp *.hpp *.h *.cc
+EXCLUDE_PATTERNS       = */.venv/* \
+                         */.bach_env/* \
+                         */go2_sdk/* \
+                         */__pycache__/* \
+                         */build/* \
+                         */sim/go2/*
+
+#---------------------------------------------------------------------------
+# Output formats
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+SOURCE_BROWSER         = YES
