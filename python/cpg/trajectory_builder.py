@@ -7,11 +7,9 @@ the duty-factor stance/swing split (GaitScheduler), and CPG blending toward the
 default standing pose.
 """
 
-from enum import auto
+from enum import Enum, auto
 import os, sys
 from dataclasses import asdict, dataclass
-
-from numpy import angle
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -406,14 +404,18 @@ class TrajectoryBuilder:
           - contact[foot]:    1 if foot is in stance (phi < duty), else 0
         """
         method = self.robot_interface.trajectory_method
-        foot_positions: dict[Foot, Coordinate]
-        foot_velocities: dict[Foot, Coordinate]
 
-        if method is TrajectoryMethod.ELLIPSOID:
-            foot_positions, foot_velocities = self.build_ellipsoid_trajectory(
-                neuron_phase, neuron_phase_velocities
+        if method is not TrajectoryMethod.ELLIPSOID:
+            raise NotImplementedError(
+                f"Trajectory method {method.name} is not implemented; only "
+                f"TrajectoryMethod.ELLIPSOID is. Construct the RobotInterface with "
+                f"trajectory_method=TrajectoryMethod.ELLIPSOID (the default), or set "
+                f"robot_interface.trajectory_method = TrajectoryMethod.ELLIPSOID."
             )
 
+        foot_positions, foot_velocities = self.build_ellipsoid_trajectory(
+            neuron_phase, neuron_phase_velocities
+        )
         return self.apply_cpg_blending(foot_positions, foot_velocities)
 
     def apply_cpg_blending(

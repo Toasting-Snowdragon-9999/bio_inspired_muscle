@@ -44,31 +44,29 @@
 cpp/build/*
 !cpp/build/.gitkeep
 
-# Python env
-python/.bach_env/*
+# Python virtual environments
+.venv/
+python/.venv/
+python/.bach_env/
 
-.vscode/*
-
-MUJOCO_LOG.TXT
-
-python/sim/__pycache__/*
-python/plotting/__pycache__/*
-python/cpg/__pycache__/*
-python/pd/__pycache__/*
-python/controllers/__pycache__/*
-python/inverse_kinematics/__pycache__/*
-python/shared_module/__pycache__/*
-
-!python/sim/go2/assets/*
-
-# Python bytecode / caches (catch-all so nothing slips through)
+# Python bytecode / caches
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
 
-# Alternate virtual-env name and vendored Unitree Go2 SDK
-python/.venv/
+# Editor / tooling
+.vscode/*
+
+# MuJoCo runtime log
+MUJOCO_LOG.TXT
+
+# Vendored Unitree Go2 SDK
 python/go2_sdk/
 
 # Local uncompressed video master (kept out of the repo) and generated API docs
 Docs/*_master.mp4
 Docs/doxygen/
+
+# Keep the Go2 model assets even though other binaries are ignored above
+!python/sim/go2/assets/*

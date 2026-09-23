@@ -13,7 +13,7 @@ import sys
 import io
 import contextlib
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import gymnasium as gym
@@ -25,7 +25,7 @@ from mujoco_sim import MujocoSim
 from cpg.trajectory_builder import EllipsoidConfig
 from controllers.ik_controller import IKController
 from shared_module.robot_state import (
-    Foot, RobotInterface, State, Mode, Gait, TrajectoryMethod,
+    RobotInterface, State, Mode, Gait, TrajectoryMethod,
 )
 
 

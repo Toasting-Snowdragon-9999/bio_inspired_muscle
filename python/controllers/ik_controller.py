@@ -13,12 +13,11 @@ from mujoco.glfw import glfw
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from logger.logger_config import logger
 from cpg.kuramoto_cpg import KuramotoCpg
 from inverse_kinematics.inverse_kin import *
 from shared_module.robot_state import Joint, RobotInterface, Foot, Mode
 from shared_module.global_constants import FOOT_TO_JOINT_DICT
-from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, Coordinate, GaitScheduler
+from cpg.trajectory_builder import EllipsoidConfig, OvalOffset, TrajectoryBuilder, GaitScheduler
 from pd.muscle_like_pd import MuscleLikePD
 
 # Maximum joint velocity (rad/s) to prevent aggressive torques from large
@@ -34,26 +33,6 @@ home_position = { # IN JOINT ANGLES
     Foot.RL: np.array([ 1.56000000e-03, 1.02456780e+00, -1.75184535e+00]),
     Foot.RR: np.array([ 1.56000000e-03, 1.02612405e+00, -1.75448753e+00]),
 }
-
-def pretty_print_foot_positions(title: str, foot_positions: dict[Foot, Coordinate]):
-    """@brief Pretty-print a per-foot Cartesian position table to stdout for debugging.
-
-    @param title: Heading printed above the table.
-    @param foot_positions: Mapping of Foot to a Coordinate (x, y, z) to display.
-    """
-    print(f"\n{title}")
-    print("-" * 40)
-
-    for foot in Foot:
-        pos = foot_positions[foot]
-        print(
-            f"{foot.name:>3}  "
-            f" [{float(pos.x): .4f},  "
-            f"{float(pos.y): .4f},  "
-            f"{float(pos.z): .4f}]"
-        )
-
-    print("-" * 40)
 
 class IKController:
     """
@@ -98,8 +77,6 @@ class IKController:
             self.solvers[foot] = LevenbergMarquardtIK(foot)
             self.prev_q[foot] = home_position[foot]
         # ===== IK END =====
-        # self.prev_cpg_output = None
-        # self.iteration = 0
 
     def reset(self) -> None:
         """@brief Reset all stateful controller components (CPG phases, IK warm-start).

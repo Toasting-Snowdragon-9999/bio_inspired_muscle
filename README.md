@@ -11,12 +11,14 @@ and the joints are actuated by a **muscle-like adaptive-impedance controller
 
 ## Demo
 
-The clip below is the project's result — the Go2 locomoting in MuJoCo:
+A recording of the result — the Go2 locomoting in MuJoCo — is in the repository:
 
-<video src="https://github.com/Toasting-Snowdragon-9999/bio_inspired_muscle/raw/main/Docs/Quadruped_locomotion.mp4" controls muted loop width="100%"></video>
+▶️ [`Docs/Quadruped_locomotion.mp4`](Docs/Quadruped_locomotion.mp4) (5 MB)
 
-> ▶️ If the player above does not appear in your viewer, watch / download it here:
-> [`Docs/Quadruped_locomotion.mp4`](Docs/Quadruped_locomotion.mp4)
+> GitHub does not play `.mp4` files inline from the repository tree: click the
+> link above, then **View raw** to download and play it locally. To embed it as
+> a player in this README instead, drag the file into a GitHub issue or PR
+> comment box and paste the `user-attachments` URL GitHub returns.
 
 ---
 
@@ -27,10 +29,10 @@ The controller is a feed-forward pipeline driven by a shared state object
 back into the shared state:
 
 ```
-                ┌─────────────────────────────────────────────┐
+                ┌──────────────────────────────────────────────┐
                 │  RobotInterface  (central shared state hub)   │
                 │  gait, frequency, joint pos/vel, contacts …   │
-                └───────────────┬───────────────────▲───────────┘
+                └───────────────┬───────────────────▲──────────┘
                                 │                   │ sensors
                                 ▼                   │
    KuramotoCpg ──► TrajectoryBuilder ──► Levenberg-  ──► MuscleLikePD ──► MujocoSim
@@ -61,8 +63,8 @@ by a parameter set in `data/.settings/`.
 ```
 bio_inspired_muscle/
 ├── python/                  # Active implementation (the project lives here)
-│   ├── cpg/                 # Central Pattern Generators (Kuramoto, Matsuoka, trajectory builder)
-│   │   └── brian_sim/       # Brian2 spiking-neuron CPG experiments
+│   ├── cpg/                 # Central Pattern Generators (Kuramoto, trajectory builder)
+│   │   └── brian_sim/       # Brian2 spiking-neuron CPG experiments (standalone)
 │   ├── controllers/         # IK controller — orchestrates the control pipeline
 │   ├── inverse_kinematics/  # Levenberg-Marquardt leg IK solver
 │   ├── pd/                  # Muscle-like PD + adaptive-impedance (OIAC) control
@@ -75,7 +77,7 @@ bio_inspired_muscle/
 │   └── requirements.txt
 ├── cpp/                     # C++ scaffolding (CMake; not the active implementation)
 ├── data/                    # Gait configs (.settings/*.ini), RL result CSVs, output plots
-├── scripts/                 # Terminal-UI launcher
+├── scripts/                 # Terminal-UI launcher (POSIX only)
 ├── Docs/                    # Papers, GET_STARTED guide, demo video, generated API docs
 ├── Doxyfile                 # Doxygen config (generates Docs/doxygen/html)
 └── README.md
@@ -85,29 +87,57 @@ bio_inspired_muscle/
 
 ## Setup
 
-Use **Python 3.12** and a virtual environment. MuJoCo ≥ 3.4.0 is required (it
-ships its own viewer — modern MuJoCo has no `./simulate` binary).
+Requires **Python 3.12 or newer** (developed on 3.12, verified on 3.14) and
+MuJoCo ≥ 3.4.0. Modern MuJoCo ships its own viewer — there is no `./simulate`
+binary to build.
 
 ```bash
 git clone https://github.com/Toasting-Snowdragon-9999/bio_inspired_muscle.git
 cd bio_inspired_muscle
+```
 
-# Create and activate a virtual environment
-python3 -m venv python/.venv
-source python/.venv/bin/activate          # Linux / macOS
+Create and activate a virtual environment:
 
-# Install dependencies
+**Linux / macOS**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**Windows (PowerShell)**
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+Then install the dependencies (same on all platforms):
+
+```bash
 pip install -r python/requirements.txt
 ```
 
 Key dependencies: `mujoco`, `numpy`, `scipy`, `matplotlib`, `gymnasium`,
-`stable-baselines3`, `cma`, `Brian2`, `opencv-python`.
+`stable-baselines3`, `cma`, `opencv-python`. `Brian2` is only needed for the
+spiking-neuron experiments in `python/cpg/brian_sim/`.
+
+### Verify the installation
+
+This runs one four-second TROT gait headlessly (no window) and prints the
+Cost of Transport. It should finish in well under a minute:
+
+```bash
+cd python/sim && python -c "from mujoco_kuramoto_test import *; cfg,f,d,p=load_settings_from_file(Gait.TROT); ri=RobotInterface(starting_state=State(mode=Mode.MOVING,gait=Gait.TROT,frequency=f),trajectory_method=TrajectoryMethod.ELLIPSOID,duty_factor=d); s=MujocoSim(get_sim_xml(Terrain.flat),robot_interface=ri,window_scale=2.0); set_spawn(s,Terrain.flat); c=IKController(robot_interface=ri,stride_length=None,step_height=None,params=p,use_adaptive_pd=True,ellipsoid_config=cfg); print('CoT:', s.headless_sim(controller=c,sim_length=4.0,warmup=1.0))"
+```
+
+Expected output: `CoT: 0.279…` (small variations are normal).
 
 ---
 
 ## Running
 
-All commands assume the virtual environment is active.
+All commands assume the virtual environment is active. Run each script **from
+the directory shown** — the scripts resolve their imports relative to their own
+location.
 
 ### Walk the robot (CPG-driven simulation)
 
@@ -117,7 +147,15 @@ python mujoco_kuramoto_test.py
 ```
 
 Opens the interactive MuJoCo viewer with the Go2 walking under CPG control.
-Different terrains (flat, hills, rough) and gaits can be selected in the script.
+The gait, terrain and controller are chosen near the top of `elip_traj_test()`
+in that file:
+
+```python
+gait    = Gait.TROT       # WALK | TROT | AMBLE | CANTER | GALLOP
+terrain = Terrain.flat    # flat | tiny_hills | rough | very_rough | large_hills | tricky
+...
+controller = IKController(..., use_adaptive_pd=False)   # True = OIAC, False = fixed-gain PD
+```
 
 ### Manual joint control (debugging)
 
@@ -130,8 +168,12 @@ python mujoco_manual_control.py        # keys select leg/joint and nudge the ang
 
 ```bash
 cd python/cpg
-python test.py                         # matplotlib plots of oscillator traces + foot paths
+python test.py                         # matplotlib plots of foot paths for the TROT gait
 ```
+
+Other demos in `test.py` (phase space, 3-D trajectories, footfall diagrams) are
+importable functions; they are not run by default because each opens a blocking
+matplotlib window.
 
 ### Optimise gait parameters with reinforcement learning
 
@@ -148,20 +190,23 @@ python reinforcement_learning.py --algo ppo --gait TROT --total-timesteps 500
 python reinforcement_learning.py --algo cma --w-cot 1.5 --w-vel 0.3 --w-tilt 3.0
 ```
 
-Results are written to `data/rl_results_*.csv`. Plot the convergence with:
+Results are written to `data/rl_results_*.csv`. Plot the convergence from the
+repository root:
 
 ```bash
-python data/visualize_convergence.py --group     # group runs by gait
+cd data
+python visualize_convergence.py --group        # group runs by gait
 ```
 
 ---
 
 ## Gait configuration
 
-Each gait is stored as an INI file in `data/.settings/` (e.g. `.WALK.ini`,
+Each gait is stored as an INI file in `data/.settings/` (`.WALK.ini`,
 `.TROT.ini`, `.CANTER.ini`, `.GALLOP.ini`, `.AMBLE.ini`) and loaded by
-`python/shared_module/settings_loader.py`. The parameters define the locomotion
-pattern — for example:
+`python/shared_module/settings_loader.py`. A file has two sections — `[gait]`
+defines the foot-trajectory shape and timing, `[oiac]` the adaptive-impedance
+gains:
 
 ```ini
 [gait]
@@ -171,9 +216,16 @@ front_x_fore   = 0.123000      # forward swing distance (m)
 front_z_top    = 0.103600      # swing height (m)
 front_rotation = 0.045600      # hip-pitch rotation
 ...
+
+[oiac]
+a = 0.1                        # learning rate of the impedance adaptation
+b = 20.0                       # sensitivity to velocity error
+k = 0.07                       # baseline stiffness
 ```
 
-`*_rl.ini` / `*_rl.pkl` files hold the best parameters found by the RL optimiser.
+If a file has no `[oiac]` section the controller falls back to its built-in
+defaults. `*_rl.ini` / `*_rl.pkl` files hold the best parameters found by the
+RL optimiser.
 
 ---
 
@@ -184,16 +236,24 @@ Every class and function is documented with Doxygen-style `@brief` / `@param` /
 
 ```bash
 doxygen Doxyfile
-# open Docs/doxygen/html/index.html
+# then open Docs/doxygen/html/index.html
 ```
 
 ---
 
-## C++ side
+## Known limitations
 
-`cpp/` contains CMake scaffolding (`bio_inspired_locomotion`, `cpg`,
-`pd_controller` targets). It is structural only — the active implementation is
-in Python. See [`cpp/README.md`](cpp/README.md).
+- **Trajectory shapes:** `TrajectoryMethod` declares `EGG`, `OVAL` and `BEZIER`
+  alongside `ELLIPSOID`, but only `ELLIPSOID` is implemented. Selecting another
+  raises `NotImplementedError`. `ELLIPSOID` is the default.
+- **Fuzzy gait switching** (`python/fuzzy_logic/`) is implemented and testable
+  standalone, but is not yet wired into the main simulation loop.
+- **Terminal-UI launcher** (`scripts/interface_app.py`) depends on
+  `simple_term_menu`, which is POSIX-only and does not run on Windows.
+- **C++ side** (`cpp/`) is CMake scaffolding only — the active implementation is
+  Python. See [`cpp/README.md`](cpp/README.md).
+- **CANTER** runs but is the least-tuned gait; it makes noticeably less forward
+  progress per stride than `TROT`.
 
 ---
 

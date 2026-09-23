@@ -27,8 +27,13 @@ SETTINGS_PATH = os.path.join(
 
 def load_settings_from_file(gait: Gait):
     """
-    arg: gait: Gait enum value (e.g., Gait.TROT)
-    returns: EllipsoidConfig, frequency, duty_factor
+    @brief Load a gait's trajectory shape, timing and OIAC gains from its .ini file.
+
+    @param gait: Gait to load (e.g. Gait.TROT); selects data/.settings/.<GAIT>.ini.
+    @return 4-tuple (EllipsoidConfig, frequency, duty_factor, params), where
+            params is the (a, b, k) OIAC tuple, or None if the file has no
+            [oiac] section (callers should then fall back to their defaults).
+    @throws FileNotFoundError if no settings file exists for the gait.
     """
     parser = ConfigParser()
 
