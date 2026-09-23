@@ -22,7 +22,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from kuramoto_cpg import KuramotoCpg
-from trajectory_builder import TrajectoryBuilder, GaitScheduler, EllipsoidConfig
+from trajectory_builder import TrajectoryBuilder, GaitScheduler
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.global_constants import (

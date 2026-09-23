@@ -97,10 +97,12 @@ class Mode(Enum):
 class TrajectoryMethod(Enum):
     """Selects which foot trajectory shape the TrajectoryBuilder will produce.
     Set via robot_interface.trajectory_method = TrajectoryMethod.X at any time."""
+    ELLIPSOID = auto()   # rotatable ellipse with per-foot x-displacement — requires ellipsoid_config on TrajectoryBuilder
+    # Planned alternative shapes. TrajectoryBuilder.build_trajectory has no
+    # implementation for these yet and raises NotImplementedError if selected.
     EGG       = auto()   # classic egg/ellipse — simple, no extra parameters needed
     OVAL      = auto()   # asymmetric oval    — requires oval_offsets dict on TrajectoryBuilder
     BEZIER    = auto()   # Bézier swing+stance — requires bezier_control_points (or uses defaults)
-    ELLIPSOID = auto()   # rotatable ellipse with per-foot x-displacement — requires ellipsoid_config on TrajectoryBuilder
 
 @dataclass
 class State:
@@ -218,7 +220,7 @@ class RobotInterface:
     TODO: Add safeguard to prevent invalid state transitions (e.g., WALK -> BOUND without TROT).
     """
 
-    def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.EGG, duty_factor: float = 0.5):
+    def __init__(self, starting_state: State, trajectory_method: TrajectoryMethod = TrajectoryMethod.ELLIPSOID, duty_factor: float = 0.5):
         """
         @brief Construct a RobotInterface instance.
         @param starting_state:
@@ -554,14 +556,10 @@ class RobotInterface:
         """
         self.robot_state.next_state.frequency = float(value)
 
-    @property
-    def current_state(self) -> State:
-        """
-        @brief Accessor for the current state.
-        @return
-        """
-        return self.robot_state.current_state if self.robot_state else None
-
+    # NOTE: current_state / next_state are defined further up together with their
+    # setters. They must not be re-declared here: a getter-only re-declaration
+    # shadows the setter, making `robot_interface.current_state = ...` raise
+    # AttributeError. Only prev_state (read-only by design) belongs here.
     @property
     def prev_state(self) -> State:
         """
@@ -569,14 +567,6 @@ class RobotInterface:
         @return
         """
         return self.robot_state.previous_state if self.robot_state else None
-    
-    @property
-    def next_state(self) -> State:
-        """
-        @brief Accessor for the next state.
-        @return
-        """
-        return self.robot_state.next_state if self.robot_state else None
 
     @property
     def joint_positions(self) -> dict[Joint, float]:
@@ -608,7 +598,7 @@ class RobotInterface:
         @brief Accessor for the body orientation.
         @return
         """
-        return self._body_orientatio
+        return self._body_orientation
 
     @joint_positions.setter
     def joint_positions(self, joint_positions: dict[Joint, float]):

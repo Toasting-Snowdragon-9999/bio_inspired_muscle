@@ -2,7 +2,6 @@
 and the mapping dictionaries between neurons, feet, joints, MuJoCo actuators/sensors, and labels."""
 
 import numpy as np
-from enum import Enum
 try:
     from robot_state import RobotState, State, Joint, Gait, Foot
 except ModuleNotFoundError:

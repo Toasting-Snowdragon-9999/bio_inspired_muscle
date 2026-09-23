@@ -20,7 +20,7 @@ from cpg.trajectory_builder import EllipsoidConfig
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from controllers.ik_controller import IKController
-from shared_module.robot_state import Foot, RobotInterface, State, Mode, Gait, TrajectoryMethod
+from shared_module.robot_state import RobotInterface, State, Mode, Gait, TrajectoryMethod
 
 # ── Penalty COT returned when a trial fails (robot fell, IK diverged, etc.) ──
 PENALTY_COT = 10.0

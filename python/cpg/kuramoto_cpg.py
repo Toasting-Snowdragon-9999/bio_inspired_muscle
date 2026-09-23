@@ -11,9 +11,8 @@ from dataclasses import dataclass
 from scipy.optimize import root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from shared_module.global_constants import NEURON_CNT, NEURON_TO_FOOT_DICT
+from shared_module.global_constants import NEURON_CNT
 from shared_module.robot_state import RobotInterface
-from logger.logger_config import logger
 
 
 class KuramotoCpg:
@@ -290,16 +289,16 @@ class KuramotoCpg:
         """
         return self.d_theta
 
-    def get_oscillator_outputs(self) -> tuple[np.ndarray, np.ndarray]:
+    def get_oscillator_outputs(self) -> list[float]:
         """
         @brief Return the per-leg normalised oscillator output signal.
 
-        Return normalised output signal per leg for oscillator graph overlay.
-        Returns:
-            leg_outputs:  shape (4,)  — -sin(θ_i)
-            knee_outputs: shape (4,)  — clamped sin(θ_i + knee_offset)
+        Produces one value per leg, used for the oscillator graph overlay and as
+        the per-foot CPG signal consumed by IKController.run. The knee phase
+        offset is deliberately not applied here.
 
-        @return Per-leg output signal cos(θ_i) for each oscillator.
+        @return Length-4 list of cos(theta_i), one per oscillator, in leg order
+                (see NEURON_TO_FOOT_DICT). Each value lies in [-1, 1].
         """
         outputs = []
         for i in range(self.neurons_cnt):

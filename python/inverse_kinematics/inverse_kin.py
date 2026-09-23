@@ -8,7 +8,6 @@ routine for validating IK against reference foot positions.
 """
 import os, sys
 import numpy as np
-from enum import Enum, auto
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 

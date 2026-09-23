@@ -7,7 +7,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from mujoco_sim import MujocoSim
-from cpg.trajectory_builder import EllipsoidConfig, OvalOffset
 import json
 from dataclasses import asdict
 
@@ -358,9 +357,9 @@ def elip_traj_test():
 
     cot = sim.compute_CoT()
     print("Cost of Transport:", cot)
-    oiac_filename = "data/oiac_data.json"
-    pd_filename = "data/pd_data.json"
-    save_robot_data(sim.robot_interface.data_list, filename=pd_filename)
+    # Swap to "data/oiac_data.json" when running the OIAC controller, so the
+    # PD and OIAC runs can be compared by data/plot_sinlge_run_oiacvspd.py.
+    save_robot_data(sim.robot_interface.data_list, filename="data/pd_data.json")
     graph_roll_pitch(sim.robot_interface.data_list, tmin=6.0, tmax=12.0)
 
     # footfall_comparison = sim.foot_fall_comparison
@@ -372,8 +371,7 @@ def elip_traj_test():
 def main():
     """@brief Main."""
     elip_traj_test()
-    return
-    
+
 
 if __name__ == "__main__":
     main()

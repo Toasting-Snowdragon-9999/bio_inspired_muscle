@@ -14,6 +14,8 @@ class ada_imp_ctrl():
         When Using the MuscleLikePD controller, the default params cant be used
         @param dof: Number of degrees of freedom (joints) this controller adapts.
         @param params: (a, b, k) tuple of OIAC adaptation parameters (a, b control the adaptation factor; k weights velocity error).
+            May be None — e.g. load_settings_from_file() returns None when a gait's
+            .ini file has no [oiac] section — in which case the defaults above are used.
         @param use_oiac: If True use online adaptive impedance; otherwise use fixed-gain diagonal PD.
         """
         self.DOF = dof
@@ -29,6 +31,10 @@ class ada_imp_ctrl():
         self.dq = np.zeros((self.DOF, 1))
         self.dq_d = np.zeros((self.DOF, 1))
 
+        # A caller may pass params=None explicitly (which bypasses the default in
+        # the signature), so fall back to the defaults rather than failing to unpack.
+        if params is None:
+            params = (0.2, 5.0, 0.05)
         self.a, self.b, self.k = params
 
         self.use_oiac = use_oiac
@@ -57,10 +63,10 @@ class ada_imp_ctrl():
             self.b_mat = (self.gen_track_err @ self.gen_vel_err.T) / self.gen_ad_factor
         else:
             # Normal non adaptive pd control, with fixed gains.
-            # NOTE on signs: gen_pos_err/gen_vel_err in this module use (q - q_d) because
-            # the OIAC outer-product formula relies on that convention. The *consumer*
-            # (muscle_like_pd.py) applies the control law as tau = K @ (q_d - q) + B @ (dq_d - dq),
-            # so the positive diagonal K, B below are stabilising.
+            # NOTE on signs: gen_pos_err/gen_vel_err in this module are (q_d - q) and
+            # (dq_d - dq) — see the properties below. The *consumer* (muscle_like_pd.py)
+            # applies the control law as tau = K @ (q_d - q) + B @ (dq_d - dq), so the
+            # positive diagonal K, B below are stabilising (they restore the joint toward q_d).
             self.q = np.asarray(q).reshape(-1, 1)
             self.q_d = np.asarray(q_d).reshape(-1, 1)
             self.dq = np.asarray(dq).reshape(-1, 1)

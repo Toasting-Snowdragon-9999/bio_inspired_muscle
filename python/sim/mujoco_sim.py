@@ -9,7 +9,6 @@ targets back to the simulator. Supports both an interactive GLFW-rendered loop
 with Cost-of-Transport (CoT) and gait-quality metrics. Also installs a stderr
 filter that suppresses harmless GLib warning spam.
 """
-from pyexpat import model
 import os, sys
 import time
 import threading
@@ -25,9 +24,8 @@ from mujoco.glfw import glfw
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import (
-    LEG_LABELS, KNEE_POS_RANGE, FRONT_HIP_POS_RANGE,
-    ABDUCTION_POS_RANGE, BACK_HIP_POS_RANGE, SENSOR_POS_DICT,
-    SENSOR_VEL_DICT, ACTUATOR_DICT, NEURON_TO_FOOT_DICT
+    SENSOR_POS_DICT,
+    SENSOR_VEL_DICT, ACTUATOR_DICT
 )
 from shared_module.robot_state import Joint, RobotInterface, Foot, Hip, Thigh, RobotData
 

@@ -6,7 +6,7 @@ from kuramoto_cpg import KuramotoCpg
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from shared_module.global_constants import NEURON_TO_FOOT_DICT
-from trajectory_builder import TrajectoryBuilder, Coordinate, OvalOffset, EllipsoidConfig, GaitScheduler
+from trajectory_builder import TrajectoryBuilder, Coordinate, EllipsoidConfig, GaitScheduler
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from shared_module.robot_state import RobotInterface, State, Gait, Mode, Foot, TrajectoryMethod
@@ -230,15 +230,15 @@ def test_trajectory_builder(gait=None, freq_in=None, duty_in=None):
     """
     if gait is None:
         raise ValueError("Gait cannot be None")
-    conf, freq, duty = load_settings_from_file(gait)
+    conf, freq, duty, _ = load_settings_from_file(gait)
 
     if freq_in is not None:
         freq = freq_in
     if duty_in is not None:
         duty = duty_in
-        conf
 
-    robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=freq))
+    robot_interface = RobotInterface(starting_state=State(gait=Gait.TROT, mode=Mode.MOVING, frequency=freq),
+                                     trajectory_method=TrajectoryMethod.ELLIPSOID)
     robot_interface.active_gait = gait
     robot_interface.active_traj_params = conf
     robot_interface.duty_factor = duty
@@ -246,7 +246,11 @@ def test_trajectory_builder(gait=None, freq_in=None, duty_in=None):
     cpg = KuramotoCpg(robot_interface)
     
     step_height = {Foot.FL: 0.14, Foot.FR: 0.14, Foot.RL: 0.1, Foot.RR: 0.1}
-    builder = TrajectoryBuilder(robot_interface, width=0.1, height=step_height)
+    width = {Foot.FL: 0.1, Foot.FR: 0.1, Foot.RL: 0.1, Foot.RR: 0.1}
+    # ellipsoid_config is required by the ELLIPSOID method — pass the config
+    # loaded from the gait's .ini file above.
+    builder = TrajectoryBuilder(robot_interface, width=width, height=step_height,
+                                duty_factor=duty, ellipsoid_config=conf)
 
     second = 20.0 
     steps = int(second / robot_interface.dt)
@@ -692,73 +696,19 @@ def plot_single_gait_footfall():
 
 
 def test_main():
-    """@brief Test main."""
-    print("==================================================")
-    print("Testing footfall pattern")
-    #plot_single_gait_footfall()
+    """@brief Entry point: plot the CPG-driven foot trajectories for the TROT gait.
 
+    Other demos in this module (test_cpg_output, test_gait_transtion, test_3d,
+    test_phase_space, plot_single_gait_footfall, ...) can be called from here or
+    imported individually; they are not run by default because each one opens a
+    blocking matplotlib window.
+    """
     print("==================================================")
     print("Testing ellipsoid trajectory")
     test_trajectory_builder(gait=Gait.TROT)
-    # freq = 1.40
-    # duty = 0.20
-    # gait = Gait.WALK
-    # test_cpg_output(gait, freq, duty)
-    # freq = 1.750
-    # duty = 0.40
-    # gait = Gait.AMBLE
-    # test_cpg_output(gait, freq, duty)
-    # freq = 2.20
-    # duty = 0.50
-    # gait = Gait.TROT
-    # test_cpg_output(gait, freq, duty)
-    # freq = 2.350
-    # duty = 0.45
-    # gait = Gait.CANTER
-    # test_cpg_output(gait, freq, duty)
-    # freq = 2.5
-    # duty = 0.65
-    # gait = Gait.GALLOP
-    # test_cpg_output(gait, freq, duty)
-
-
-    #test_gait_transtion()
     test_ellipsoid_traj()
-
-    print("==================================================")
-    return
-
-    print("==================================================")
-    print("Testing oval trajectory")
-    test_oval_traj()
-    print("==================================================")
-    return
-
-    generate_foot_traj_for_IK()
-    print("==================================================")
-    print("Testing CPG output")
-    test_cpg_output()
     print("==================================================")
 
-    print("==================================================")
-    print("Testing Trajectory Builder output")
-    test_trajectory_builder()
-    print("==================================================")
-
-    print("==================================================")
-    print("Testing Trajectory Builder output")
-    test_3d_direction()
-    print("==================================================")
-
-    print("==================================================")
-    test_3d()
-    print("==================================================")
-    print("==================================================")
-    test_3d_direction()
-    print("==================================================")
-    print("==================================================")
-    test_phase_space()
-    print("==================================================")
 
 if __name__ == '__main__':
     test_main()

@@ -11,8 +11,7 @@ fuzzy switcher together into the per-tick update used by the simulator.
 """
 
 import os,sys
-from typing import Any
-from enum import Enum, auto
+from enum import Enum
 
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
@@ -286,7 +285,6 @@ class FuzzyGaitSwitch:
         pass `decimated_steps * sim_dt`, NOT `sim_dt`, otherwise the
         integration runs ~30x slower than intended.
         """
-        prev = self.blending_factor
         self.blending_factor = float(np.clip(self.blending_factor + blend_rate_output * dt, 0.0, 1.0))
         return self.blending_factor
 

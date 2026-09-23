@@ -9,7 +9,6 @@ menu loop and dispatches to the appropriate command page.
 
 # Default libraries
 import argparse
-import time
 from typing import Optional
 
 # External libraries
